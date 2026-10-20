@@ -1,0 +1,1 @@
+export default function Loading(){return <main id="main" className="loading-screen"><img src="/logo.png" alt="Student Council"/><p>Открываем рабочее пространство…</p><div className="loading-line"/></main>;}

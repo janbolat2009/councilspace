@@ -1,0 +1,10 @@
+CREATE UNIQUE INDEX "Application_one_pending" ON "Application" ("userId", "departmentId") WHERE status = 'PENDING';
+ALTER TABLE "Report" ADD CONSTRAINT "Report_positive_claim" CHECK ("claimedMinutes" > 0 AND "claimedMinutes" <= 1440);
+ALTER TABLE "Report" ADD CONSTRAINT "Report_positive_approved" CHECK ("approvedMinutes" IS NULL OR ("approvedMinutes" > 0 AND "approvedMinutes" <= 1440));
+ALTER TABLE "Task" ADD CONSTRAINT "Task_one_deadline" CHECK ("dueAt" IS NULL OR "dueDate" IS NULL);
+ALTER TABLE "Event" ADD CONSTRAINT "Event_valid_interval" CHECK ("endAt" > "startAt");
+ALTER TABLE "Department" ADD CONSTRAINT "Department_nonnegative_rate" CHECK (rate >= 0);
+ALTER TABLE "School" ADD CONSTRAINT "School_daily_limit" CHECK ("dailyLimit" BETWEEN 60 AND 1440);
+ALTER TABLE "Application" ADD CONSTRAINT "Application_weekly_hours" CHECK ("weeklyHours" BETWEEN 1 AND 40);
+ALTER TABLE "Message" ADD CONSTRAINT "Message_size" CHECK (length(text) <= 3000 AND (length(text) > 0 OR "deletedAt" IS NOT NULL));
+ALTER TABLE "LedgerEntry" ADD CONSTRAINT "Ledger_direction" CHECK ((kind = 'CREDIT' AND minutes > 0 AND points >= 0) OR (kind = 'REVERSAL' AND minutes < 0 AND points <= 0));

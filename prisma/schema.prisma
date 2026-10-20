@@ -1,0 +1,377 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+}
+enum GlobalRole {
+  STUDENT
+  SCHOOL_ADMIN
+  PRESIDENT
+  VICE_PRESIDENT
+}
+enum DepartmentRole {
+  MINISTER
+  VICE_MINISTER
+  MEMBER
+}
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  SUBMITTED
+  COMPLETED
+  CANCELLED
+}
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+enum EventStatus {
+  DRAFT
+  PROPOSED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+enum ReportStatus {
+  DRAFT
+  PENDING
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+}
+enum LedgerKind {
+  CREDIT
+  REVERSAL
+}
+model School {
+  id             String @id @default(cuid())
+  name           String @default("Student Council")
+  logoUrl        String @default("/logo.png")
+  navy           String @default("#06394b")
+  accent         String @default("#9b1828")
+  cream          String @default("#fff2d5")
+  timezone       String @default("Asia/Qyzylorda")
+  dailyLimit     Int @default(720)
+  academicStart  String @default("09-01")
+  terms          Json @default("[[\"09-01\",\"10-31\"],[\"11-01\",\"12-31\"],[\"01-01\",\"03-31\"],[\"04-01\",\"08-31\"]]")
+  users          User[]
+  departments    Department[]
+}
+model User {
+  id            String @id @default(cuid())
+  name          String?
+  email         String? @unique
+  emailVerified DateTime?
+  image         String?
+  schoolId      String
+  school        School @relation(fields: [schoolId], references: [id])
+  globalRole    GlobalRole @default(STUDENT)
+  classroom     String @default("")
+  interests     String @default("")
+  onboarded     Boolean @default(false)
+  isDemo        Boolean @default(false)
+  createdAt     DateTime @default(now())
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+  applications  Application[] @relation("Applicant")
+  decisions     Application[] @relation("ApplicationReviewer")
+  tasks         Task[] @relation("TaskAuthor")
+  assignments   TaskAssignee[]
+  comments      TaskComment[]
+  ledEvents     Event[] @relation("EventLead")
+  events        EventMember[]
+  reports       Report[]
+  reviews       ReportDecision[]
+  ledger        LedgerEntry[]
+  messages      Message[]
+  reads         ChannelRead[]
+  notifications Notification[]
+  audits        AuditLog[]
+  @@index([schoolId])
+}
+model Account {
+  id                String @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+}
+model Session {
+  id           String @id @default(cuid())
+  sessionToken String @unique
+  userId       String
+  expires      DateTime
+  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+model VerificationToken {
+  identifier String
+  token      String @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+model Department {
+  id           String @id @default(cuid())
+  schoolId     String
+  school       School @relation(fields: [schoolId], references: [id])
+  slug         String
+  name         String
+  description  String @default("")
+  ministerName String @default("")
+  rate         Decimal @default(10) @db.Decimal(10,4)
+  ruleVersion  Int @default(1)
+  memberships  Membership[]
+  applications Application[]
+  tasks        Task[]
+  events       Event[]
+  channels     Channel[]
+  audits       AuditLog[]
+  @@unique([schoolId, slug])
+}
+model Membership {
+  id           String @id @default(cuid())
+  userId       String
+  departmentId String
+  role         DepartmentRole @default(MEMBER)
+  status       MembershipStatus @default(ACTIVE)
+  joinedAt     DateTime @default(now())
+  user         User @relation(fields: [userId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
+  @@unique([userId, departmentId])
+  @@index([departmentId, status])
+}
+model Application {
+  id           String @id @default(cuid())
+  userId       String
+  departmentId String
+  motivation   String
+  direction    String
+  skills       String
+  weeklyHours  Int
+  idea         String
+  status       ApplicationStatus @default(PENDING)
+  comment      String @default("")
+  reviewerId   String?
+  decidedAt    DateTime?
+  createdAt    DateTime @default(now())
+  user         User @relation("Applicant", fields: [userId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
+  reviewer     User? @relation("ApplicationReviewer", fields: [reviewerId], references: [id])
+  @@index([departmentId, status])
+  @@index([userId, createdAt])
+}
+model Task {
+  id           String @id @default(cuid())
+  departmentId String
+  authorId     String
+  eventId      String?
+  title        String
+  description  String @default("")
+  priority     Priority @default(MEDIUM)
+  status       TaskStatus @default(TODO)
+  dueAt        DateTime?
+  dueDate      DateTime? @db.Date
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  department   Department @relation(fields: [departmentId], references: [id])
+  author       User @relation("TaskAuthor", fields: [authorId], references: [id])
+  event        Event? @relation(fields: [eventId], references: [id])
+  assignees    TaskAssignee[]
+  checklist    ChecklistItem[]
+  comments     TaskComment[]
+  reports      Report[]
+  @@index([departmentId, status, dueAt])
+}
+model TaskAssignee {
+  taskId String
+  userId String
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id])
+  @@id([taskId, userId])
+}
+model ChecklistItem {
+  id      String @id @default(cuid())
+  taskId  String
+  text    String
+  done    Boolean @default(false)
+  task    Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+model TaskComment {
+  id        String @id @default(cuid())
+  taskId    String
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+  task      Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id])
+}
+model Event {
+  id           String @id @default(cuid())
+  departmentId String
+  leadId       String
+  title        String
+  description  String @default("")
+  goal         String @default("")
+  startAt      DateTime
+  endAt        DateTime
+  location     String
+  audience     String @default("")
+  backupPlan   String @default("")
+  status       EventStatus @default(PROPOSED)
+  isPublic     Boolean @default(false)
+  createdAt    DateTime @default(now())
+  department   Department @relation(fields: [departmentId], references: [id])
+  lead         User @relation("EventLead", fields: [leadId], references: [id])
+  members      EventMember[]
+  guests       EventGuest[]
+  tasks        Task[]
+  channels     Channel[]
+  @@index([departmentId, startAt])
+  @@index([isPublic, status, startAt])
+}
+model EventMember {
+  eventId String
+  userId  String
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user    User @relation(fields: [userId], references: [id])
+  @@id([eventId, userId])
+}
+model EventGuest {
+  id      String @id @default(cuid())
+  eventId String
+  name    String
+  status  String @default("UNCONFIRMED")
+  event   Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+model Report {
+  id              String @id @default(cuid())
+  taskId          String
+  userId          String
+  summary         String
+  performedOn     DateTime @db.Date
+  claimedMinutes  Int
+  approvedMinutes Int?
+  evidenceUrl     String @default("")
+  comment         String @default("")
+  reviewComment   String @default("")
+  status          ReportStatus @default(DRAFT)
+  revision        Int @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  task            Task @relation(fields: [taskId], references: [id])
+  user            User @relation(fields: [userId], references: [id])
+  decisions       ReportDecision[]
+  ledger          LedgerEntry[]
+  @@index([userId, performedOn, status])
+  @@index([taskId, status])
+}
+model ReportDecision {
+  id              String @id @default(cuid())
+  reportId        String
+  reviewerId      String
+  action          String
+  reason          String
+  approvedMinutes Int?
+  revision        Int
+  createdAt       DateTime @default(now())
+  report          Report @relation(fields: [reportId], references: [id])
+  reviewer        User @relation(fields: [reviewerId], references: [id])
+}
+model LedgerEntry {
+  id          String @id @default(cuid())
+  reportId    String
+  userId      String
+  revision    Int
+  kind        LedgerKind
+  minutes     Int
+  points      Decimal @db.Decimal(16,4)
+  rate        Decimal @db.Decimal(10,4)
+  ruleVersion Int
+  performedOn DateTime @db.Date
+  reason      String @default("")
+  createdAt   DateTime @default(now())
+  report      Report @relation(fields: [reportId], references: [id])
+  user        User @relation(fields: [userId], references: [id])
+  @@unique([reportId, revision, kind])
+  @@index([userId, performedOn])
+}
+model Channel {
+  id           String @id @default(cuid())
+  departmentId String
+  eventId      String?
+  name         String
+  announcements Boolean @default(false)
+  department   Department @relation(fields: [departmentId], references: [id])
+  event        Event? @relation(fields: [eventId], references: [id])
+  messages     Message[]
+  reads        ChannelRead[]
+  @@unique([departmentId, name])
+}
+model Message {
+  id         String @id @default(cuid())
+  sequence   BigInt @unique @default(autoincrement())
+  channelId  String
+  userId     String
+  replyToId  String?
+  text       String
+  createdAt  DateTime @default(now())
+  editedAt   DateTime?
+  deletedAt  DateTime?
+  channel    Channel @relation(fields: [channelId], references: [id])
+  user       User @relation(fields: [userId], references: [id])
+  replyTo    Message? @relation("Replies", fields: [replyToId], references: [id])
+  replies    Message[] @relation("Replies")
+  @@index([channelId, sequence])
+}
+model ChannelRead {
+  userId       String
+  channelId    String
+  lastSequence BigInt @default(0)
+  user         User @relation(fields: [userId], references: [id])
+  channel      Channel @relation(fields: [channelId], references: [id])
+  @@id([userId, channelId])
+}
+model Notification {
+  id        String @id @default(cuid())
+  userId    String
+  title     String
+  href      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User @relation(fields: [userId], references: [id])
+  @@index([userId, readAt, createdAt])
+}
+model AuditLog {
+  id           String @id @default(cuid())
+  actorId      String
+  departmentId String?
+  action       String
+  objectId     String
+  reason       String
+  createdAt    DateTime @default(now())
+  actor        User @relation(fields: [actorId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+  @@index([departmentId, createdAt])
+}
