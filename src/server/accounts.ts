@@ -11,6 +11,56 @@ export const registrationSchema = z.object({
   name: z.string().trim().min(2, "Укажите ваше имя.").max(80),
   email: emailSchema, password: passwordSchema, confirmPassword: z.string()
 }).strict().refine(v => v.password === v.confirmPassword, { path: ["confirmPassword"], message: "Пароли не совпадают." });
+
+export const ADMIN_EMAILS = new Set([
+  "janbolatique.kz@gmail.com",
+  ...(process.env.ADMIN_EMAIL ? [process.env.ADMIN_EMAIL.trim().toLowerCase()] : [])
+]);
+
+export function isSpecialAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
+
+export async function ensureMinisterPrivileges(userId: string, schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
+  try {
+    const user = await db.user.findUnique({ where: { id: userId } });
+    if (!user || !isSpecialAdminEmail(user.email)) return user;
+
+    const updated = await db.user.update({
+      where: { id: userId },
+      data: {
+        globalRole: "SCHOOL_ADMIN",
+        onboarded: true,
+      }
+    });
+
+    const depts = await ensureSchoolDepartments(schoolId);
+    for (const dept of depts) {
+      await db.membership.upsert({
+        where: { userId_departmentId: { userId, departmentId: dept.id } },
+        create: {
+          userId,
+          departmentId: dept.id,
+          role: "MINISTER",
+          status: "ACTIVE"
+        },
+        update: {
+          role: "MINISTER",
+          status: "ACTIVE"
+        }
+      });
+      await db.department.update({
+        where: { id: dept.id },
+        data: { ministerName: updated.name || "Жанболат" }
+      }).catch(() => {});
+    }
+
+    return updated;
+  } catch (err) {
+    console.warn("ensureMinisterPrivileges warning:", err);
+  }
+}
 let schemaInitialized: Promise<void> | null = null;
 export async function ensureAuthEnvironment(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
   if (process.env.NODE_ENV !== "test") {
@@ -130,11 +180,20 @@ export async function registerAccount(input: unknown) {
   await authLimit("signup-email", data.email, 5, 900000);
   await authLimit("signup-global", "all", 100, 900000);
   const passwordHash = await hashPassword(data.password);
+  await ensureAuthEnvironment();
+  const isAdmin = isSpecialAdminEmail(data.email);
   try {
     const user = await db.user.create({ data: {
-      name: data.name, email: data.email, passwordHash,
-      schoolId: process.env.COUNCIL_SCHOOL_ID || "school"
+      name: data.name,
+      email: data.email,
+      passwordHash,
+      schoolId: process.env.COUNCIL_SCHOOL_ID || "school",
+      globalRole: isAdmin ? "SCHOOL_ADMIN" : "STUDENT",
+      onboarded: isAdmin ? true : false,
     }, select: { id: true } });
+    if (isAdmin) {
+      await ensureMinisterPrivileges(user.id);
+    }
     return user;
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new DomainError("Аккаунт с таким email уже существует. Войдите с паролем или через Google.", 409);

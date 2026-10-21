@@ -5,7 +5,7 @@ import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
 import { DomainError } from "./policy";
-import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment } from "@/server/accounts";
+import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment, isSpecialAdminEmail, ensureMinisterPrivileges } from "@/server/accounts";
 
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
 const adapter = PrismaAdapter(db);
@@ -19,7 +19,21 @@ export const authOptions: NextAuthOptions = {
     async createUser(data: Omit<AdapterUser, "id">) {
       const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
       await ensureAuthEnvironment(schoolId);
-      return await db.user.create({ data: { ...data, email: data.email.toLowerCase(), schoolId } }) as AdapterUser;
+      const email = data.email.toLowerCase();
+      const isAdmin = isSpecialAdminEmail(email);
+      const user = await db.user.create({
+        data: {
+          ...data,
+          email,
+          schoolId,
+          globalRole: isAdmin ? "SCHOOL_ADMIN" : "STUDENT",
+          onboarded: isAdmin ? true : false,
+        }
+      }) as AdapterUser;
+      if (isAdmin) {
+        await ensureMinisterPrivileges(user.id, schoolId);
+      }
+      return user;
     },
     async linkAccount(account: Parameters<NonNullable<typeof adapter.linkAccount>>[0]) {
       const existing = await db.account.findUnique({
@@ -110,15 +124,21 @@ export async function currentUser() {
   if (!session?.user) return null;
   await ensureAuthEnvironment();
   const id = (session.user as { id?: string } | undefined)?.id;
+  let user = null;
   if (id) {
-    const byId = await db.user.findUnique({ where: { id } });
-    if (byId) return byId;
+    user = await db.user.findUnique({ where: { id } });
   }
-  const email = session.user.email?.trim().toLowerCase();
-  if (email) {
-    return db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, isDemo: false } });
+  if (!user && session.user.email) {
+    const email = session.user.email.trim().toLowerCase();
+    user = await db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, isDemo: false } });
   }
-  return null;
+  if (user && isSpecialAdminEmail(user.email)) {
+    if (user.globalRole !== "SCHOOL_ADMIN" || !user.onboarded) {
+      await ensureMinisterPrivileges(user.id, user.schoolId);
+      user = await db.user.findUnique({ where: { id: user.id } });
+    }
+  }
+  return user;
 }
 export async function requireUser() {
   const user = await currentUser();
