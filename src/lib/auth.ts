@@ -84,8 +84,33 @@ export const authOptions: NextAuthOptions = {
 };
 export async function currentUser() {
   const session = await getServerSession(authOptions);
-  const id = (session?.user as { id?: string } | undefined)?.id;
-  return id ? db.user.findUnique({ where: { id } }) : null;
+  if (!session?.user) return null;
+  const id = (session.user as { id?: string }).id;
+  const email = session.user.email?.toLowerCase();
+
+  try {
+    if (id) {
+      const user = await db.user.findUnique({ where: { id } });
+      if (user) return user;
+    }
+    if (email) {
+      const user = await db.user.findUnique({ where: { email } });
+      if (user) return user;
+      const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+      return await db.user.create({
+        data: {
+          email,
+          name: session.user.name || "Ученик",
+          image: session.user.image || null,
+          schoolId,
+          emailVerified: new Date(),
+        }
+      });
+    }
+  } catch (err) {
+    console.error("currentUser database lookup error:", err);
+  }
+  return null;
 }
 export async function requireUser() {
   const user = await currentUser();
