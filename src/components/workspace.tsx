@@ -15,9 +15,11 @@ import { ChatPanel } from "./workspace-chat";
 const nav = [{ id: "overview", icon: LayoutDashboard }, { id: "tasks", icon: CheckSquare }, { id: "events", icon: CalendarDays }, { id: "calendar", icon: CalendarDays }, { id: "chat", icon: MessageSquare }, { id: "leaderboard", icon: Trophy }, { id: "members", icon: Users }, { id: "reports", icon: FileText }];
 const management = [{ id: "applications", icon: UserPlus }, { id: "review", icon: ClipboardCheck }, { id: "audit", icon: ScrollText }, { id: "settings", icon: Settings }];
 export function Workspace({ initialData, view, demo = false }: { initialData: WorkspaceData; view: string; demo?: boolean }) {
-  const router = useRouter(), [pending,startTransition] = useTransition(), reduced = useReducedMotion();
+  const router = useRouter(), [pending,startTransition] = useTransition();
+  const [mounted,setMounted] = useState(false);
   const [modal,setModal] = useState<ModalState>(null), [search,setSearch] = useState(""), [mobile,setMobile] = useState(false), [toast,setToast] = useState(""), [createMenu,setCreateMenu] = useState(false);
   const data = initialData;
+  useEffect(() => { setMounted(true); }, []);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 4000); return () => clearTimeout(timer); }, [toast]);
   function navigate(next: string, extra: Record<string,string> = {}) {
     const params = new URLSearchParams({ view: next, ...(data.department ? { department: data.department.id } : {}), ...extra });
@@ -52,7 +54,7 @@ export function Workspace({ initialData, view, demo = false }: { initialData: Wo
       <main id="main" className={cn("workspace-content", pending && "loading-page")} aria-busy={pending}>
         <div className="page-heading"><div><div className="eyebrow">{data.department?.name || "COUNCIL SPACE"}</div><h1>{activeView === "overview" ? "Обзор департамента" : t(activeView)}</h1><p>{activeView === "overview" ? "Всё, что нужно для больших идей и слаженной работы." : activeView === "leaderboard" ? "Каждый вклад важен. Здесь — результаты подтверждённой работы." : activeView === "chat" ? "Обсуждаем идеи, делимся прогрессом, остаёмся на связи." : "Общее пространство. Понятные задачи. Видимый вклад."}</p></div>
         {data.department && <div className="create-wrap"><Button onClick={() => setCreateMenu(!createMenu)} aria-expanded={createMenu}><Plus size={17}/>Создать<ChevronDown size={14}/></Button>{createMenu && <div className="create-menu">{[["task","Новая задача",CheckSquare],["event","Новое мероприятие",CalendarDays],["report","Отчёт о работе",FileText]].map(([type,label,Icon]) => {const I = Icon as typeof Plus; return <button key={String(type)} onClick={() => {setModal({type:String(type)});setCreateMenu(false);}}><I size={17}/>{String(label)}</button>;})}</div>}</div>}</div>
-        <motion.div key={activeView} initial={reduced ? false : { opacity:0, y:5 }} animate={{opacity:1,y:0}} transition={{duration:.18}}>{views[activeView] ?? <Overview/>}</motion.div>
+        <motion.div key={activeView} initial={!mounted ? false : { opacity:0, y:5 }} animate={{opacity:1,y:0}} transition={{duration:.18}}>{views[activeView] ?? <Overview/>}</motion.div>
         <footer className="workspace-footer"><span>Council Space <span>·</span> Вместе делаем больше.</span><span>{data.school.timezone}<span>·</span>{demo ? "Обзор демоданных" : "Рабочее пространство"}</span><button onClick={() => signOut({callbackUrl:"/"})}><LogOut size={13}/>Выйти</button></footer>
       </main>
     </div>
