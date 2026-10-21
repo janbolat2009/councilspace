@@ -26,6 +26,38 @@ export const authOptions: NextAuthOptions = {
       return (await db.user.create({
         data: { ...data, schoolId }
       })) as AdapterUser;
+    },
+    async linkAccount(account: any) {
+      try {
+        const existing = await db.account.findUnique({
+          where: {
+            provider_providerAccountId: {
+              provider: account.provider,
+              providerAccountId: account.providerAccountId
+            }
+          }
+        });
+        if (existing) return existing;
+        return (await db.account.create({
+          data: {
+            id: crypto.randomUUID(),
+            userId: account.userId,
+            type: account.type,
+            provider: account.provider,
+            providerAccountId: account.providerAccountId,
+            refresh_token: account.refresh_token,
+            access_token: account.access_token,
+            expires_at: account.expires_at,
+            token_type: account.token_type,
+            scope: account.scope,
+            id_token: account.id_token,
+            session_state: account.session_state
+          }
+        })) as any;
+      } catch (err) {
+        console.warn("linkAccount handled error:", err);
+        return account as any;
+      }
     }
   },
   secret: process.env.NEXTAUTH_SECRET,
@@ -66,7 +98,16 @@ export const authOptions: NextAuthOptions = {
       return true;
     },
     async jwt({ token, user }) {
-      if (user) token.sub = user.id;
+      if (user?.id) {
+        token.sub = user.id;
+      } else if (!token.sub && token.email) {
+        try {
+          const dbUser = await db.user.findUnique({ where: { email: token.email } });
+          if (dbUser) token.sub = dbUser.id;
+        } catch (e) {
+          console.warn("jwt user lookup error:", e);
+        }
+      }
       return token;
     },
     async session({ session, token }) {
