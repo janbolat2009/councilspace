@@ -48,13 +48,21 @@ export const authOptions: NextAuthOptions = {
       }
     })] : [])
   ],
+  debug: true,
   callbacks: {
     async signIn({ account, profile, user }) {
+      console.log("signIn callback:", { provider: account?.provider, userEmail: user?.email, profileEmail: (profile as { email?: string })?.email });
       if (account?.provider === "demo") return devLogin;
       const email = (user?.email || (profile as { email?: string })?.email)?.toLowerCase();
-      if (!email) return false;
+      if (!email) {
+        console.error("signIn callback: no email provided");
+        return false;
+      }
       const domain = process.env.GOOGLE_ALLOWED_DOMAIN?.trim().toLowerCase();
-      if (domain && email.split("@")[1] !== domain) return false;
+      if (domain && email.split("@")[1] !== domain) {
+        console.error(`signIn callback: domain ${email.split("@")[1]} is not ${domain}`);
+        return false;
+      }
       return true;
     },
     async jwt({ token, user }) {
