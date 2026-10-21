@@ -51,6 +51,7 @@ export const authOptions: NextAuthOptions = {
           const user = await authenticatePassword(credentials);
           return user ? { id: user.id, name: user.name, email: user.email, image: user.image } : null;
         } catch (error) {
+          console.error("[auth authorize error]:", error);
           if (error instanceof DomainError && error.status === 429) throw new Error("TooManyAttempts");
           throw new Error("ServiceUnavailable");
         }

@@ -18,28 +18,47 @@ export async function ensureAuthEnvironment(schoolId = process.env.COUNCIL_SCHOO
       schemaInitialized = (async () => {
         try {
           await db.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT`);
-          await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "User_email_case_insensitive" ON "User" (LOWER(email)) WHERE email IS NOT NULL`);
+        } catch (err) {
+          console.warn("Schema auto-check passwordHash warning:", err);
+        }
+        try {
           await db.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AuthRateLimit" ("key" TEXT PRIMARY KEY, "attempts" INTEGER NOT NULL DEFAULT 1, "windowStart" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+        } catch (err) {
+          console.warn("Schema auto-check AuthRateLimit warning:", err);
+        }
+        try {
           await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AuthRateLimit_windowStart_idx" ON "AuthRateLimit" ("windowStart")`);
         } catch (err) {
-          console.warn("Schema auto-check warning:", err);
+          console.warn("Schema auto-check AuthRateLimit index warning:", err);
+        }
+        try {
+          await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "User_email_case_insensitive" ON "User" (LOWER(email)) WHERE email IS NOT NULL`);
+        } catch (err) {
+          console.warn("Schema auto-check email index warning:", err);
         }
       })();
     }
     await schemaInitialized;
+    try {
+      await db.school.upsert({
+        where: { id: schoolId },
+        create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
+        update: {}
+      });
+    } catch (err) {
+      console.warn("Schema auto-check school upsert warning:", err);
+    }
+  }
+}
+export async function ensureSchoolDepartments(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
+  await ensureAuthEnvironment(schoolId);
+  try {
     await db.school.upsert({
       where: { id: schoolId },
       create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
       update: {}
     });
-  }
-}
-export async function ensureSchoolDepartments(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
-  await db.school.upsert({
-    where: { id: schoolId },
-    create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
-    update: {}
-  });
+  } catch {}
   const existing = await db.department.findMany({
     where: { schoolId },
     select: { id: true, name: true, description: true },
@@ -66,18 +85,45 @@ export async function ensureSchoolDepartments(schoolId = process.env.COUNCIL_SCH
   });
   return [created];
 }
+const memoryRateLimits = new Map<string, { attempts: number; windowStart: number }>();
+
 export async function authLimit(scope: string, value: string, maximum: number, windowMs: number) {
-  await ensureAuthEnvironment();
   const key = createHash("sha256").update(scope + ":" + value).digest("hex");
-  const cutoff = new Date(Date.now() - windowMs);
   const now = new Date();
-  const rows = await db.$queryRaw<{ attempts: number }[]>(Prisma.sql`
-    INSERT INTO "AuthRateLimit" ("key", "attempts", "windowStart") VALUES (${key}, 1, ${now})
-    ON CONFLICT ("key") DO UPDATE SET
-      "attempts" = CASE WHEN "AuthRateLimit"."windowStart" <= ${cutoff} THEN 1 ELSE "AuthRateLimit"."attempts" + 1 END,
-      "windowStart" = CASE WHEN "AuthRateLimit"."windowStart" <= ${cutoff} THEN ${now} ELSE "AuthRateLimit"."windowStart" END
-    RETURNING "attempts"`);
-  if (rows[0].attempts > maximum) throw new DomainError("Слишком много попыток. Попробуйте через 15 минут.", 429);
+  const cutoff = new Date(now.getTime() - windowMs);
+  let dbOk = false;
+
+  try {
+    await ensureAuthEnvironment();
+    const rows = await db.$queryRaw<{ attempts: number }[]>(Prisma.sql`
+      INSERT INTO "AuthRateLimit" ("key", "attempts", "windowStart") VALUES (${key}, 1, ${now})
+      ON CONFLICT ("key") DO UPDATE SET
+        "attempts" = CASE WHEN "AuthRateLimit"."windowStart" <= ${cutoff} THEN 1 ELSE "AuthRateLimit"."attempts" + 1 END,
+        "windowStart" = CASE WHEN "AuthRateLimit"."windowStart" <= ${cutoff} THEN ${now} ELSE "AuthRateLimit"."windowStart" END
+      RETURNING "attempts"`);
+    if (rows && rows.length > 0) {
+      dbOk = true;
+      if (rows[0].attempts > maximum) {
+        throw new DomainError("Слишком много попыток. Попробуйте через 15 минут.", 429);
+      }
+    }
+  } catch (err) {
+    if (err instanceof DomainError) throw err;
+    console.warn("Database rate-limit fallback to memory for", scope, err);
+  }
+
+  if (!dbOk) {
+    const nowMs = now.getTime();
+    const existing = memoryRateLimits.get(key);
+    if (!existing || existing.windowStart <= (nowMs - windowMs)) {
+      memoryRateLimits.set(key, { attempts: 1, windowStart: nowMs });
+    } else {
+      existing.attempts += 1;
+      if (existing.attempts > maximum) {
+        throw new DomainError("Слишком много попыток. Попробуйте через 15 минут.", 429);
+      }
+    }
+  }
 }
 export async function registerAccount(input: unknown) {
   const data = registrationSchema.parse(input);
