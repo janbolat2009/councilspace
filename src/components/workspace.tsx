@@ -36,6 +36,11 @@ export function Workspace({ initialData, view, demo = false }: { initialData: Wo
   const activeView = !data.department && !["profile","notifications"].includes(view) ? "profile" : view;
   const views: Record<string, React.ReactNode> = { overview:<Overview/>, tasks:<TasksPanel/>, events:<EventsPanel/>, calendar:<CalendarPanel/>, chat:<ChatPanel/>, leaderboard:<LeaderboardPanel/>, members:<MembersPanel/>, reports:<ReportsPanel/>, review:<ReportsPanel review/>, applications:<ApplicationsPanel/>, notifications:<NotificationsPanel/>, audit:<AuditPanel/>, profile:<ProfilePanel/>, settings:<SettingsPanel/> };
   const style = { "--navy": data.school.navy, "--accent": data.school.accent, "--cream": data.school.cream } as CSSProperties;
+
+  if (!mounted) {
+    return <main id="main" className="loading-screen"><img src={data.school.logoUrl || "/logo.png"} alt="Student Council"/><p>Открываем рабочее пространство…</p><div className="loading-line"/></main>;
+  }
+
   return <WorkspaceContext.Provider value={{ data, demo, mutate, open:setModal, navigate, search }}><div className="app-shell" style={style}>
     {mobile && <button className="sidebar-backdrop" aria-label="Закрыть навигацию" onClick={() => setMobile(false)}/>}
     <aside className={cn("sidebar", mobile && "mobile-open")}>
