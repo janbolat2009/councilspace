@@ -93,6 +93,7 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
 export type WorkspaceData = Awaited<ReturnType<typeof getWorkspace>>;
 export async function publicData() {
   const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+  const hasDemo = process.env.ENABLE_DEMO === "true";
   try {
     const school = await db.school.findUnique({ where: { id: schoolId } });
     if (!school) {
@@ -100,7 +101,8 @@ export async function publicData() {
         school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
         departments: [{ id: "intellectual-dept", slug: "intellectual-development", name: "Intellectual Development", ministerName: "Zhanbolat", description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей." }],
         events: [],
-        leaders: []
+        leaders: [],
+        hasDemo
       });
     }
     const [departments, events, leaders] = await Promise.all([
@@ -108,14 +110,15 @@ export async function publicData() {
       db.event.findMany({ where: { department: { schoolId }, isPublic: true, status: { in: ["CONFIRMED", "COMPLETED"] } }, select: { id: true, title: true, description: true, startAt: true, endAt: true, location: true, audience: true, status: true }, orderBy: { startAt: "asc" } }),
       db.user.findMany({ where: { schoolId, globalRole: { in: ["PRESIDENT", "VICE_PRESIDENT"] } }, select: { name: true, image: true, globalRole: true } })
     ]);
-    return serialize({ school, departments, events, leaders });
+    return serialize({ school, departments, events, leaders, hasDemo });
   } catch (err) {
     console.error("publicData error:", err);
     return serialize({
       school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
       departments: [{ id: "intellectual-dept", slug: "intellectual-development", name: "Intellectual Development", ministerName: "Zhanbolat", description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей." }],
       events: [],
-      leaders: []
+      leaders: [],
+      hasDemo
     });
   }
 }
