@@ -1,65 +1,12 @@
 import { getServerSession, type NextAuthOptions } from "next-auth";
-import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
-import type { AdapterUser } from "next-auth/adapters";
 import { db } from "./db";
 import { DomainError } from "./policy";
-const baseAdapter = PrismaAdapter(db);
+
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
+
 export const authOptions: NextAuthOptions = {
-  adapter: {
-    ...baseAdapter,
-    async createUser(data: Omit<AdapterUser, "id">) {
-      const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
-      const existing = data.email ? await db.user.findUnique({ where: { email: data.email } }) : null;
-      if (existing) {
-        return (await db.user.update({
-          where: { id: existing.id },
-          data: {
-            name: existing.name || data.name,
-            image: existing.image || data.image,
-            emailVerified: existing.emailVerified || data.emailVerified
-          }
-        })) as AdapterUser;
-      }
-      return (await db.user.create({
-        data: { ...data, schoolId }
-      })) as AdapterUser;
-    },
-    async linkAccount(account: any) {
-      try {
-        const existing = await db.account.findUnique({
-          where: {
-            provider_providerAccountId: {
-              provider: account.provider,
-              providerAccountId: account.providerAccountId
-            }
-          }
-        });
-        if (existing) return existing;
-        return (await db.account.create({
-          data: {
-            id: crypto.randomUUID(),
-            userId: account.userId,
-            type: account.type,
-            provider: account.provider,
-            providerAccountId: account.providerAccountId,
-            refresh_token: account.refresh_token,
-            access_token: account.access_token,
-            expires_at: account.expires_at,
-            token_type: account.token_type,
-            scope: account.scope,
-            id_token: account.id_token,
-            session_state: account.session_state
-          }
-        })) as any;
-      } catch (err) {
-        console.warn("linkAccount handled error:", err);
-        return account as any;
-      }
-    }
-  },
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt", maxAge: 60 * 60 * 12 },
   pages: { signIn: "/login", error: "/login" },
@@ -80,22 +27,41 @@ export const authOptions: NextAuthOptions = {
       }
     })] : [])
   ],
-  debug: true,
   callbacks: {
     async signIn({ account, profile, user }) {
-      console.log("signIn callback:", { provider: account?.provider, userEmail: user?.email, profileEmail: (profile as { email?: string })?.email });
       if (account?.provider === "demo") return devLogin;
       const email = (user?.email || (profile as { email?: string })?.email)?.toLowerCase();
-      if (!email) {
-        console.error("signIn callback: no email provided");
-        return false;
-      }
+      if (!email) return false;
       const domain = process.env.GOOGLE_ALLOWED_DOMAIN?.trim().toLowerCase();
-      if (domain && email.split("@")[1] !== domain) {
-        console.error(`signIn callback: domain ${email.split("@")[1]} is not ${domain}`);
-        return false;
+      if (domain && email.split("@")[1] !== domain) return false;
+
+      // Синхронизируем пользователя с PostgreSQL
+      try {
+        const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+        const name = user?.name || (profile as { name?: string })?.name || "Ученик";
+        const image = user?.image || (profile as { picture?: string })?.picture || null;
+        
+        const existing = await db.user.findUnique({ where: { email } });
+        if (existing) {
+          user.id = existing.id;
+        } else {
+          const created = await db.user.create({
+            data: {
+              email,
+              name,
+              image,
+              schoolId,
+              emailVerified: new Date()
+            }
+          });
+          user.id = created.id;
+        }
+        return true;
+      } catch (err) {
+        console.error("signIn db sync error:", err);
+        // Даже если база временно недоступна, разрешаем вход
+        return true;
       }
-      return true;
     },
     async jwt({ token, user }) {
       if (user?.id) {
