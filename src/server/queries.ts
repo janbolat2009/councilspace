@@ -5,7 +5,7 @@ import { periodBounds, schoolDate } from "@/lib/time";
 import { z } from "zod";
 const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true } as const;
 export async function getWorkspace(actor: User, departmentId?: string, params = new URLSearchParams()) {
-  const user = await db.user.findUniqueOrThrow({ where: { id: actor.id } });
+  const user = await db.user.findUniqueOrThrow({ where: { id: actor.id }, include: { accounts: { select: { provider: true } } } });
   const school = await db.school.upsert({
     where: { id: user.schoolId },
     create: { id: user.schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
@@ -81,7 +81,7 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
   })));
   const today = schoolDate(new Date(), school.timezone);
   return serialize({
-    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, globalRole: user.globalRole, isDemo: user.isDemo },
+    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, globalRole: user.globalRole, isDemo: user.isDemo, hasPassword: !!user.passwordHash, hasGoogle: user.accounts.some(a => a.provider === "google"), googleAvailable: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
     school, departments, allDepartments, department: currentDepartment, manager, membership: permission?.member ?? null,
     tasks, events, reports, applications, members, channels: unreadChannels, notifications, leaderboard, audits, schoolUsers, range, period, sort,
     stats: { minutes: allCredits?._sum.minutes ?? 0, points: allCredits?._sum.points?.toString() ?? "0",

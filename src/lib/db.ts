@@ -33,7 +33,7 @@ const pool = createPool();
 
 export const db = globalDb.prisma ?? new PrismaClient({
   adapter: pool ? new PrismaPg(pool) : new PrismaPg({ connectionString: process.env.DATABASE_URL }),
-  log: ["error"]
+  log: []
 });
 
 globalDb.prisma = db;

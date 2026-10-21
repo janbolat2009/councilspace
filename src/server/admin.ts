@@ -4,7 +4,7 @@ import { access, admin, audit, DomainError, transaction } from "@/lib/policy";
 import { id, text, reason, profileSchema, webUrl } from "@/lib/validation";
 export async function saveProfile(actor: User, input: unknown) {
   const data = profileSchema.parse(input);
-  return transaction(tx => tx.user.update({ where: { id: actor.id }, data: { ...data, onboarded: true } }));
+  return transaction(tx => tx.user.update({ where: { id: actor.id }, data: { ...data, onboarded: true }, select: { id: true, name: true, image: true, classroom: true, interests: true, onboarded: true } }));
 }
 export async function updateMembership(actor: User, input: unknown) {
   const data = z.object({ userId: id, departmentId: id, role: z.enum(["MINISTER", "VICE_MINISTER", "MEMBER"]), status: z.enum(["ACTIVE", "SUSPENDED", "REVOKED"]), reason }).strict().parse(input);
@@ -28,7 +28,7 @@ export async function updateGlobalRole(actor: User, input: unknown) {
     const target = await tx.user.findUnique({ where: { id: data.userId } });
     if (!target || target.schoolId !== actor.schoolId) throw new DomainError("Пользователь недоступен.", 403);
     await audit(tx, actor.id, null, "GLOBAL_ROLE_CHANGED", data.userId, `${data.role}: ${data.reason}`);
-    return tx.user.update({ where: { id: data.userId }, data: { globalRole: data.role } });
+    return tx.user.update({ where: { id: data.userId }, data: { globalRole: data.role }, select: { id: true, globalRole: true } });
   });
 }
 export async function createDepartment(actor: User, input: unknown) {

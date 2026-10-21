@@ -75,6 +75,7 @@ model User {
   name          String?
   email         String? @unique
   emailVerified DateTime?
+  passwordHash  String?
   image         String?
   schoolId      String
   school        School @relation(fields: [schoolId], references: [id])
@@ -131,6 +132,12 @@ model VerificationToken {
   token      String @unique
   expires    DateTime
   @@unique([identifier, token])
+}
+model AuthRateLimit {
+  key         String @id
+  attempts    Int @default(1)
+  windowStart DateTime @default(now())
+  @@index([windowStart])
 }
 model Department {
   id           String @id @default(cuid())

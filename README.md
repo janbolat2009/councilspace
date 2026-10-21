@@ -11,13 +11,15 @@
 - **Framework:** Next.js 16 (App Router, TypeScript, Standalone output)
 - **Стили и UI:** Tailwind CSS 4, доступные диалоги и примитивы (`@radix-ui/react-dialog`, `@radix-ui/react-slot`, `class-variance-authority`), иконки `lucide-react`, анимации `motion` с поддержкой `prefers-reduced-motion`
 - **База данных:** PostgreSQL + Prisma 7 (`@prisma/client`, `@prisma/adapter-pg`, SQL-миграции и строгие `CHECK` / `UNIQUE` ограничения)
-- **Авторизация:** Auth.js / NextAuth (`next-auth`, `@next-auth/prisma-adapter`) с Google OAuth
+- **Авторизация:** NextAuth (`next-auth`, `@next-auth/prisma-adapter`) с Google OAuth и регистрацией по email/паролю; пароли хранятся как salted scrypt hash
 - **Валидация и часовые пояса:** Zod 4, `date-fns`, `date-fns-tz` (хранение в UTC, отображение в часовом поясе школы, по умолчанию `Asia/Qyzylorda`)
 - **Тестирование:** Vitest (интеграционные тесты поверх выделенной тестовой базы PostgreSQL)
 
 ---
 
 ## 2. Быстрый старт (локальная разработка)
+
+Сначала установите зависимости командой `npm ci`, скопируйте `.env.example` в `.env` и задайте случайный `NEXTAUTH_SECRET`. Выберите один из двух вариантов PostgreSQL ниже. Не запускайте оба на одном порту. В Windows PowerShell для копирования используйте `Copy-Item .env.example .env`; существующий `.env` с ключами не перезаписывайте.
 
 ### Вариант А — PostgreSQL через Docker Compose
 
@@ -46,7 +48,6 @@ cp .env.example .env
 2. Сгенерируйте Prisma Client, примените миграции и создайте базовую запись школы и департамента **Intellectual Development** (министр — **Zhanbolat**, без фиктивных людей и ролей):
 
 ```bash
-npm install
 npm run db:generate
 npm run db:migrate
 npm run db:seed
@@ -59,6 +60,8 @@ npm run dev
 ```
 
 Приложение откроется по адресу `http://localhost:3000`.
+
+Открывайте именно `localhost:3000`, совпадающий с `NEXTAUTH_URL`. Адрес `127.0.0.1:3000` — другой origin и имеет отдельные cookies.
 
 ---
 
@@ -82,6 +85,12 @@ ENABLE_DEMO=true npm run db:demo
 ---
 
 ## 4. Настройка Google OAuth
+
+На `/login` доступны Google и email/пароль; на `/register` создаётся обычный аккаунт ученика без прав команды. После успешного входа `/auth/complete` отправляет нового пользователя на `/onboarding`, существующего — в `/workspace`. Профиль и заявка сохраняются в PostgreSQL.
+
+Если email уже зарегистрирован с паролем, сначала войдите с паролем и нажмите «Подключить мой Google-аккаунт» в профиле. Автоматического объединения парольных аккаунтов по совпадению email нет. В профиле можно добавить пароль к Google-аккаунту или изменить существующий, указав текущий пароль. Вход и регистрация ограничены по частоте на сервере.
+
+Подтверждение email письмом и восстановление забытого пароля по почте пока не реализованы. Парольная регистрация не подтверждает владение почтовым адресом; доступ в департамент всё равно требует отдельного одобрения.
 
 1. Откройте [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services** → **OAuth consent screen** и настройте экран согласия.
 2. Перейдите в **Credentials** → **Create Credentials** → **OAuth client ID** → тип **Web application**.
@@ -170,6 +179,10 @@ npm test
 npm run build
 ```
 
+Для тестов задайте отдельный `TEST_DATABASE_URL`, например `postgresql://council:council@127.0.0.1:5432/council_test`. В PowerShell: `$env:TEST_DATABASE_URL='postgresql://council:council@127.0.0.1:5432/council_test'`. Тесты очищают только эту выделенную базу; имя должно заканчиваться на `_test`.
+
+На 21.10.2026 успешно прошли 29 интеграционных тестов: 18 сценариев работы команды и 11 сценариев регистрации, хеширования, входа, связки Google и ограничений частоты. Также прошли TypeScript, ESLint без предупреждений и production-сборка. Подробности ручной проверки: [docs/verification.md](docs/verification.md).
+
 Автоматическими интеграционными тестами (`tests/workflows.test.ts` на реальной PostgreSQL базе `council_test`) проверены все ключевые сценарии:
 1. Подача заявки учеником, запрет повторной активной заявки, одобрение руководством и открытие доступа к рабочему пространству со статусом `MEMBER`.
 2. Отклонённый и отозвавший заявку кандидат не получает доступ к закрытым данным и чату.
@@ -193,7 +206,7 @@ npm run build
 
 ## 8. Список оставшихся внешних настроек
 
-Для запуска в боевом режиме владельцу платформы остаётся выполнить только внешние конфигурационные шаги:
-1. Создать OAuth 2.0 Client в Google Cloud Console и прописать `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET` в окружении сервера (реальный вход через Google не мог быть протестирован в локальной среде без внешних ключей Google).
+Для запуска в боевом режиме владельцу платформы необходимо:
+1. Настроить OAuth Client для итогового домена и завершить контрольный вход своим Google-аккаунтом. Наличие локальных ключей само по себе не подтверждает полный OAuth-сценарий.
 2. Указать боевой `DATABASE_URL`, `NEXTAUTH_URL` и сгенерировать криптостойкий `NEXTAUTH_SECRET` (`openssl rand -base64 32`).
 3. После первого входа через Google выполнить `npm run admin:bootstrap -- <email>` и назначить роль `MINISTER` для аккаунта Zhanbolat в интерфейсе администратора.

@@ -51,3 +51,22 @@ export type Serialized<T> = T extends Date | bigint | Prisma.Decimal ? string : 
 export function serialize<T>(value: T): Serialized<T> {
   return JSON.parse(JSON.stringify(value, (_, v) => typeof v === "bigint" ? v.toString() : v)) as Serialized<T>;
 }
+export function isAllowedOrigin(req: { url: string; headers: Headers }) {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+  const allowed = new Set<string>();
+  try { allowed.add(new URL(req.url).origin); } catch {}
+  if (process.env.NEXTAUTH_URL) {
+    try { allowed.add(new URL(process.env.NEXTAUTH_URL).origin); } catch {}
+  }
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+  if (host) {
+    allowed.add(`http://${host}`);
+    allowed.add(`https://${host}`);
+  }
+  if (process.env.NODE_ENV !== "production") {
+    allowed.add("http://localhost:3000");
+    allowed.add("http://127.0.0.1:3000");
+  }
+  return allowed.has(origin);
+}

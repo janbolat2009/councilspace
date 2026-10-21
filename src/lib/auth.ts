@@ -1,114 +1,121 @@
 import { getServerSession, type NextAuthOptions } from "next-auth";
+import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import type { AdapterUser } from "next-auth/adapters";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
 import { DomainError } from "./policy";
+import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment } from "@/server/accounts";
 
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
-
+const adapter = PrismaAdapter(db);
 export const authOptions: NextAuthOptions = {
+  adapter: {
+    ...adapter,
+    async getUserByEmail(email: string) {
+      await ensureAuthEnvironment();
+      return await db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } }) as AdapterUser | null;
+    },
+    async createUser(data: Omit<AdapterUser, "id">) {
+      const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+      await ensureAuthEnvironment(schoolId);
+      return await db.user.create({ data: { ...data, email: data.email.toLowerCase(), schoolId } }) as AdapterUser;
+    },
+    async linkAccount(account: Parameters<NonNullable<typeof adapter.linkAccount>>[0]) {
+      const existing = await db.account.findUnique({
+        where: {
+          provider_providerAccountId: {
+            provider: account.provider,
+            providerAccountId: account.providerAccountId
+          }
+        }
+      });
+      if (existing) return existing as Awaited<ReturnType<NonNullable<typeof adapter.linkAccount>>>;
+      return await adapter.linkAccount!(account);
+    }
+  },
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt", maxAge: 60 * 60 * 12 },
   pages: { signIn: "/login", error: "/login" },
+  logger: {
+    error(code) { console.error("Authentication failed: " + code); },
+    warn(code) { console.warn("Authentication warning: " + code); },
+    debug() {}
+  },
   providers: [
+    CredentialsProvider({
+      id: "password", name: "Email и пароль",
+      credentials: { email: { label: "Email", type: "email" }, password: { label: "Пароль", type: "password" } },
+      async authorize(credentials) {
+        try {
+          const user = await authenticatePassword(credentials);
+          return user ? { id: user.id, name: user.name, email: user.email, image: user.image } : null;
+        } catch (error) {
+          if (error instanceof DomainError && error.status === 429) throw new Error("TooManyAttempts");
+          throw new Error("ServiceUnavailable");
+        }
+      }
+    }),
     ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? [GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET
     })] : []),
     ...(devLogin ? [CredentialsProvider({
-      id: "demo",
-      name: "Локальная демонстрация",
+      id: "demo", name: "Локальная демонстрация",
       credentials: { email: { label: "Демо-профиль", type: "text" } },
       async authorize(credentials, req) {
         const host = req.headers?.host ?? "";
         if (process.env.NODE_ENV !== "development" || !/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) return null;
         const user = await db.user.findUnique({ where: { email: credentials?.email ?? "" } });
-        return user?.isDemo && user.schoolId === "demo-school" ? user : null;
+        return user?.isDemo && user.schoolId === "demo-school" ? { id: user.id, name: user.name, email: user.email, image: user.image } : null;
       }
     })] : [])
   ],
   callbacks: {
-    async signIn({ account, profile, user }) {
+    async signIn({ account, profile }) {
+      if (account?.provider === "password") return true;
       if (account?.provider === "demo") return devLogin;
-      const email = (user?.email || (profile as { email?: string })?.email)?.toLowerCase();
-      if (!email) return false;
-      const domain = process.env.GOOGLE_ALLOWED_DOMAIN?.trim().toLowerCase();
-      if (domain && email.split("@")[1] !== domain) return false;
-
-      // Синхронизируем пользователя с PostgreSQL
+      if (account?.provider !== "google") return false;
       try {
-        const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
-        const name = user?.name || (profile as { name?: string })?.name || "Ученик";
-        const image = user?.image || (profile as { picture?: string })?.picture || null;
-        
-        const existing = await db.user.findUnique({ where: { email } });
-        if (existing) {
-          user.id = existing.id;
-        } else {
-          const created = await db.user.create({
-            data: {
-              email,
-              name,
-              image,
-              schoolId,
-              emailVerified: new Date()
-            }
-          });
-          user.id = created.id;
-        }
-        return true;
-      } catch (err) {
-        console.error("signIn db sync error:", err);
-        // Даже если база временно недоступна, разрешаем вход
-        return true;
+        return await acceptGoogleIdentity(account, profile);
+      } catch {
+        return "/login?error=ServiceUnavailable";
       }
     },
     async jwt({ token, user }) {
-      if (user?.id) {
-        token.sub = user.id;
-      } else if (!token.sub && token.email) {
-        try {
-          const dbUser = await db.user.findUnique({ where: { email: token.email } });
-          if (dbUser) token.sub = dbUser.id;
-        } catch (e) {
-          console.warn("jwt user lookup error:", e);
-        }
-      }
+      // The adapter returns the database ID, never Google's subject ID.
+      if (user) token.sub = user.id;
       return token;
     },
     async session({ session, token }) {
       if (session.user && token.sub) (session.user as typeof session.user & { id: string }).id = token.sub;
       return session;
+    },
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith("/") && !url.startsWith("//")) return baseUrl + url;
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin === baseUrl) return url;
+        if (process.env.NODE_ENV !== "production" && /^(http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/.test(parsed.origin)) {
+          return baseUrl + parsed.pathname + parsed.search;
+        }
+      } catch {}
+      return baseUrl + "/auth/complete";
     }
   }
 };
 export async function currentUser() {
   const session = await getServerSession(authOptions);
   if (!session?.user) return null;
-  const id = (session.user as { id?: string }).id;
-  const email = session.user.email?.toLowerCase();
-
-  try {
-    if (id) {
-      const user = await db.user.findUnique({ where: { id } });
-      if (user) return user;
-    }
-    if (email) {
-      const user = await db.user.findUnique({ where: { email } });
-      if (user) return user;
-      const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
-      return await db.user.create({
-        data: {
-          email,
-          name: session.user.name || "Ученик",
-          image: session.user.image || null,
-          schoolId,
-          emailVerified: new Date(),
-        }
-      });
-    }
-  } catch (err) {
-    console.error("currentUser database lookup error:", err);
+  await ensureAuthEnvironment();
+  const id = (session.user as { id?: string } | undefined)?.id;
+  if (id) {
+    const byId = await db.user.findUnique({ where: { id } });
+    if (byId) return byId;
+  }
+  const email = session.user.email?.trim().toLowerCase();
+  if (email) {
+    return db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, isDemo: false } });
   }
   return null;
 }
