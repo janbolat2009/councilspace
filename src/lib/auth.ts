@@ -11,7 +11,21 @@ export const authOptions: NextAuthOptions = {
   adapter: {
     ...baseAdapter,
     async createUser(data: Omit<AdapterUser, "id">) {
-      return await db.user.create({ data: { ...data, schoolId: process.env.COUNCIL_SCHOOL_ID || "school" } }) as AdapterUser;
+      const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+      const existing = data.email ? await db.user.findUnique({ where: { email: data.email } }) : null;
+      if (existing) {
+        return (await db.user.update({
+          where: { id: existing.id },
+          data: {
+            name: existing.name || data.name,
+            image: existing.image || data.image,
+            emailVerified: existing.emailVerified || data.emailVerified
+          }
+        })) as AdapterUser;
+      }
+      return (await db.user.create({
+        data: { ...data, schoolId }
+      })) as AdapterUser;
     }
   },
   secret: process.env.NEXTAUTH_SECRET,
@@ -35,11 +49,13 @@ export const authOptions: NextAuthOptions = {
     })] : [])
   ],
   callbacks: {
-    async signIn({ account, profile }) {
+    async signIn({ account, profile, user }) {
       if (account?.provider === "demo") return devLogin;
-      const google = profile as { email?: string; email_verified?: boolean } | undefined;
+      const email = (user?.email || (profile as { email?: string })?.email)?.toLowerCase();
+      if (!email) return false;
       const domain = process.env.GOOGLE_ALLOWED_DOMAIN?.trim().toLowerCase();
-      return !!google?.email_verified && (!domain || google.email?.toLowerCase().split("@")[1] === domain);
+      if (domain && email.split("@")[1] !== domain) return false;
+      return true;
     },
     async jwt({ token, user }) {
       if (user) token.sub = user.id;
