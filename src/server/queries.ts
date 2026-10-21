@@ -6,8 +6,30 @@ import { z } from "zod";
 const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true } as const;
 export async function getWorkspace(actor: User, departmentId?: string, params = new URLSearchParams()) {
   const user = await db.user.findUniqueOrThrow({ where: { id: actor.id } });
-  const school = await db.school.findUniqueOrThrow({ where: { id: user.schoolId } });
-  const allDepartments = await db.department.findMany({ where: { schoolId: user.schoolId }, orderBy: { name: "asc" } });
+  const school = await db.school.upsert({
+    where: { id: user.schoolId },
+    create: { id: user.schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
+    update: {}
+  });
+  let allDepartments = await db.department.findMany({ where: { schoolId: user.schoolId }, orderBy: { name: "asc" } });
+  if (!allDepartments.length) {
+    const defaultDept = await db.department.create({
+      data: {
+        schoolId: user.schoolId,
+        slug: "intellectual-development",
+        name: "Intellectual Development",
+        ministerName: "Zhanbolat",
+        description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей.",
+        channels: {
+          create: [
+            { name: "General" },
+            { name: "Announcements", announcements: true }
+          ]
+        }
+      }
+    });
+    allDepartments = [defaultDept];
+  }
   const memberships = await db.membership.findMany({ where: { userId: user.id, status: "ACTIVE" } });
   const departments = allDepartments.filter(d => isGlobalManager(user.globalRole) || memberships.some(m => m.departmentId === d.id));
   if (departmentId && !departments.some(d => d.id === departmentId)) throw new DomainError("Доступ к департаменту закрыт.", 403);
