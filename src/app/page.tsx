@@ -96,7 +96,15 @@ export default async function Home() {
       <section className="public-section" id="team">
         <div className="public-section-heading"><div><span className="eyebrow">ЛЮДИ И ОТВЕТСТВЕННОСТЬ</span><h2>Руководство совета</h2></div></div>
         <div className="leadership-grid">
-          {["PRESIDENT","VICE_PRESIDENT"].map(role=>{const leader=data?.leaders.find(l=>l.globalRole===role);return <article key={role}><span className="leadership-avatar"><Users size={27}/></span><div><h3>{leader?.name||"Позиция открыта"}</h3><p>{role==="PRESIDENT"?"President · Президент совета":"Vice President · Вице-президент"}</p></div></article>;})}
+          {([
+            ["PRESIDENT", "President · Президент совета"],
+            ["VICE_PRESIDENT", "Vice President · Вице-президент"],
+            ["PRIME_MINISTER", "Prime Minister · Премьер-министр"],
+            ["COUNSELOR", "Counselor · Каунслер"],
+          ] as const).map(([role, label]) => {
+            const leader = data?.leaders.find(l => l.globalRole === role);
+            return <article key={role}><span className="leadership-avatar"><Users size={27}/></span><div><h3>{leader?.name || "Позиция открыта"}</h3><p>{label}</p></div></article>;
+          })}
           <article><span className="leadership-avatar accent"><GraduationCap size={27}/></span><div><h3>{data?.departments.find(d=>d.slug==="intellectual-development")?.ministerName||"Zhanbolat"}</h3><p>Minister · Intellectual Development</p></div></article>
         </div>
       </section>

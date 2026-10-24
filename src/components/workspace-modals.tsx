@@ -67,11 +67,48 @@ export function WorkspaceModals({modal,close}:{modal:ModalState;close:()=>void})
   }
   if(modal.type==="apply"){title="Заявка в департамент";content=<Form fields={[{name:"motivation",label:"Почему вы хотите присоединиться?",type:"textarea",required:true},{name:"direction",label:"Интересующее направление",required:true},{name:"skills",label:"Навыки",required:true},{name:"weeklyHours",label:"Часов в неделю",type:"number",min:1,max:40,required:true,value:3},{name:"idea",label:"Ваша идея мероприятия",type:"textarea",required:true}]} onSubmit={v=>submit("apply",{...v,departmentId:modal.id,weeklyHours:Number(v.weeklyHours)})} submitLabel="Подать заявку"/>;}
   if(modal.type==="application"&&application){title=application.user.name||"Заявка";content=<div className="detail-copy"><Status value={application.status}/><p>{application.user.classroom} · {application.user.interests}</p>{[["Мотивация",application.motivation],["Направление",application.direction],["Навыки",application.skills],["Идея",application.idea]].map(([k,v])=><div key={k}><h3>{k}</h3><p>{v}</p></div>)}<p>Доступно: {application.weeklyHours} ч/неделю</p>{application.status==="PENDING"&&<Form fields={[{name:"status",label:"Решение",options:[{value:"APPROVED",label:"Принять в команду"},{value:"REJECTED",label:"Отклонить"}]},{name:"comment",label:"Комментарий",type:"textarea"}]} onSubmit={v=>submit("decideApplication",{id:application.id,...v})} submitLabel="Сохранить решение"/>}{application.comment&&<p>{application.comment}</p>}</div>;}
-  if(modal.type==="member"&&member){title=`Участие: ${member.user.name}`;content=<Form fields={[{name:"role",label:"Роль",value:member.role,options:data.user.globalRole==="SCHOOL_ADMIN"?choices(["MEMBER","VICE_MINISTER","MINISTER"]):choices([member.role])},{name:"status",label:"Статус",value:member.status,options:choices(["ACTIVE","SUSPENDED","REVOKED"])},{name:"reason",label:"Причина изменения",type:"textarea",required:true}]} onSubmit={v=>submit("updateMembership",{...v,userId:member.userId,departmentId:dept?.id})} submitLabel="Изменить участие"/>;}
+  if(modal.type==="member"&&member){
+    title=`Участие и роли: ${member.user.name}`;
+    const councilOptions=[
+      {value:"STUDENT",label:"Без роли в президиуме (Ученик)"},
+      {value:"PRESIDENT",label:"Президент (President)"},
+      {value:"VICE_PRESIDENT",label:"Вице-президент (Vice President)"},
+      {value:"PRIME_MINISTER",label:"Премьер-министр (Prime Minister)"},
+      {value:"COUNSELOR",label:"Каунслер (Counselor)"},
+      ...((data.user.globalRole==="SCHOOL_ADMIN"||data.user.isAdmin||member.user.globalRole==="SCHOOL_ADMIN")?[{value:"SCHOOL_ADMIN",label:"Администратор школы"}]:[])
+    ];
+    content=<Form fields={[
+      {name:"globalRole",label:"Роль в совете (Президиум)",value:member.user.globalRole,options:councilOptions,help:"Назначение роли Президента, Вице-президента, Премьер-министра или Каунслера закрепляет эту должность за этим участником."},
+      {name:"role",label:"Роль в департаменте",value:member.role,options:choices(["MEMBER","VICE_MINISTER","MINISTER"])},
+      {name:"status",label:"Статус в команде",value:member.status,options:member.userId===data.user.id?choices(["ACTIVE"]):choices(["ACTIVE","SUSPENDED","REVOKED"])},
+      {name:"reason",label:"Комментарий / причина",type:"textarea",placeholder:"Например: Назначен президентом совета"}
+    ]} onSubmit={v=>submit("updateMembership",{...v,userId:member.userId,departmentId:dept?.id})} submitLabel="Сохранить роли"/>;
+  }
+  if(modal.type==="assignCouncilRole"&&modal.id){
+    const roleKey=modal.id;
+    const roleLabel=statuses[roleKey]||roleKey;
+    const currentHolder=data.leaders?.find(l=>l.globalRole===roleKey)||data.members.find(m=>m.user.globalRole===roleKey)?.user;
+    const candidateMap=new Map<string,{value:string;label:string}>();
+    for(const m of data.members)if(m.status==="ACTIVE")candidateMap.set(m.userId,{value:m.userId,label:`${m.user.name||"Участник"}${m.user.classroom?` (${m.user.classroom})`:""}`});
+    for(const u of data.schoolUsers)candidateMap.set(u.id,{value:u.id,label:`${u.name||"Ученик"}${u.classroom?` (${u.classroom})`:""}`});
+    const candidates=[...candidateMap.values()];
+    title=`Назначить роль: ${roleLabel}`;
+    content=candidates.length?<Form fields={[
+      {name:"userId",label:`Кто занимает должность «${roleLabel}»`,value:currentHolder?.id||candidates[0]?.value,options:candidates,help:"Эта должность закрепляется за одним человеком и отображается у него на странице команды."},
+      {name:"reason",label:"Комментарий (необязательно)",placeholder:`Назначение на должность: ${roleLabel}`}
+    ]} onSubmit={async v=>{
+      const targetMember=data.members.find(m=>m.userId===v.userId);
+      if(targetMember&&dept){
+        await submit("updateMembership",{userId:v.userId,departmentId:dept.id,role:targetMember.role,globalRole:roleKey,status:targetMember.status,reason:v.reason||`Назначен на роль: ${roleLabel}`});
+      }else{
+        await submit("updateGlobalRole",{userId:v.userId,role:roleKey,reason:v.reason||`Назначен на роль: ${roleLabel}`});
+      }
+    }} submitLabel="Назначить"/>:<Empty title="Нет доступных участников"/>;
+  }
   if(modal.type==="department"){title="Новый департамент";content=<Form fields={[{name:"name",label:"Название",required:true},{name:"slug",label:"Адрес: латинские буквы и дефис",required:true},{name:"description",label:"Описание",type:"textarea",required:true},{name:"ministerName",label:"Публичное имя министра",help:"Не назначает права. Назначение аккаунта выполняется отдельно."}]} onSubmit={v=>submit("createDepartment",v)}/>;}
   if(modal.type==="globalRole"){
     const user=data.schoolUsers.find(u=>u.id===modal.id);title=`Назначение: ${user?.name}`;
-    content=<div className="detail-copy"><h3>Глобальная роль</h3><Form fields={[{name:"role",label:"Роль школы",value:user?.globalRole,options:choices(["STUDENT","PRESIDENT","VICE_PRESIDENT","SCHOOL_ADMIN"])},{name:"reason",label:"Причина назначения",required:true}]} onSubmit={v=>submit("updateGlobalRole",{...v,userId:modal.id})}/><h3>Роль департамента</h3><Form fields={[{name:"departmentId",label:"Департамент",options:data.allDepartments.map(d=>({value:d.id,label:d.name}))},{name:"role",label:"Роль в команде",options:choices(["MEMBER","VICE_MINISTER","MINISTER"])},{name:"reason",label:"Причина назначения",required:true}]} onSubmit={v=>submit("updateMembership",{...v,userId:modal.id,status:"ACTIVE"})}/></div>;
+    content=<div className="detail-copy"><h3>Глобальная роль в совете</h3><Form fields={[{name:"role",label:"Роль школы / совета",value:user?.globalRole,options:choices(["STUDENT","PRESIDENT","VICE_PRESIDENT","PRIME_MINISTER","COUNSELOR","SCHOOL_ADMIN"])},{name:"reason",label:"Причина назначения",placeholder:"Назначение руководства"}]} onSubmit={v=>submit("updateGlobalRole",{...v,userId:modal.id})}/><h3>Роль департамента</h3><Form fields={[{name:"departmentId",label:"Департамент",options:data.allDepartments.map(d=>({value:d.id,label:d.name}))},{name:"role",label:"Роль в команде",options:choices(["MEMBER","VICE_MINISTER","MINISTER"])},{name:"reason",label:"Причина назначения",placeholder:"Добавление в команду"}]} onSubmit={v=>submit("updateMembership",{...v,userId:modal.id,status:"ACTIVE"})}/></div>;
   }
   return <Modal key={`${modal.type}:${modal.id||""}`} title={title||"Запись не найдена"} open onClose={()=>{setError("");close();}}>{demo&&modal.type!=="help"&&<div className="modal-demo">Обзор демоданных. Для изменений <Link href="/login">войдите в аккаунт</Link>.</div>}{error&&<p className="form-error" role="alert">{error}</p>}{content||<Empty title="Запись недоступна"/>}</Modal>;
 }

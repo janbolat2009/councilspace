@@ -21,7 +21,7 @@ function createPool(): Pool | undefined {
       port: parsed.port ? parseInt(parsed.port, 10) : undefined,
       database: parsed.database ?? undefined,
       ssl: { rejectUnauthorized: false },
-      max: 5,
+      max: 10,
     };
     return new Pool(config);
   }

@@ -1,34 +1,70 @@
 import { z } from "zod";
-import type { User } from "@prisma/client";
-import { access, admin, audit, DomainError, transaction } from "@/lib/policy";
-import { id, text, reason, profileSchema, webUrl } from "@/lib/validation";
+import type { GlobalRole, User } from "@prisma/client";
+import { access, admin, audit, COUNCIL_ROLES, DomainError, isGlobalManager, isSpecialAdminEmail, transaction } from "@/lib/policy";
+import { id, text, reason, optionalText, profileSchema, webUrl } from "@/lib/validation";
+const GLOBAL_ROLES = ["STUDENT", "SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"] as const;
+const SINGLE_COUNCIL_ROLES = new Set<string>(COUNCIL_ROLES);
 export async function saveProfile(actor: User, input: unknown) {
   const data = profileSchema.parse(input);
   return transaction(tx => tx.user.update({ where: { id: actor.id }, data: { ...data, onboarded: true }, select: { id: true, name: true, image: true, classroom: true, interests: true, onboarded: true } }));
 }
 export async function updateMembership(actor: User, input: unknown) {
-  const data = z.object({ userId: id, departmentId: id, role: z.enum(["MINISTER", "VICE_MINISTER", "MEMBER"]), status: z.enum(["ACTIVE", "SUSPENDED", "REVOKED"]), reason }).strict().parse(input);
+  const data = z.object({
+    userId: id,
+    departmentId: id,
+    role: z.enum(["MINISTER", "VICE_MINISTER", "MEMBER"]),
+    globalRole: z.enum(GLOBAL_ROLES).optional(),
+    status: z.enum(["ACTIVE", "SUSPENDED", "REVOKED"]),
+    reason: optionalText(1500)
+  }).strict().parse(input);
   return transaction(async tx => {
     const { user } = await access(tx, actor, data.departmentId, true);
-    if (data.userId === actor.id) throw new DomainError("Свою роль изменяет другой руководитель.", 403);
+    if (data.userId === actor.id && data.status !== "ACTIVE") throw new DomainError("Нельзя приостановить или отозвать собственное участие.", 400);
     const target = await tx.user.findUnique({ where: { id: data.userId } });
     if (!target || target.schoolId !== actor.schoolId) throw new DomainError("Пользователь недоступен.", 403);
+    const canAssignLeadership = user.globalRole === "SCHOOL_ADMIN" || isGlobalManager(user.globalRole) || isSpecialAdminEmail(user.email);
     const old = await tx.membership.findUnique({ where: { userId_departmentId: { userId: data.userId, departmentId: data.departmentId } } });
-    if ((data.role !== (old?.role ?? "MEMBER") || old?.role === "MINISTER" || data.role === "MINISTER" || !old) && user.globalRole !== "SCHOOL_ADMIN") throw new DomainError("Назначение руководства и нового членства доступно администратору.", 403);
-    const result = await tx.membership.upsert({ where: { userId_departmentId: { userId: data.userId, departmentId: data.departmentId } }, create: { userId: data.userId, departmentId: data.departmentId, role: data.role, status: data.status }, update: { role: data.role, status: data.status } });
-    await audit(tx, actor.id, data.departmentId, "MEMBERSHIP_CHANGED", result.id, `${data.role} / ${data.status}: ${data.reason}`);
+    if (!old && !canAssignLeadership) throw new DomainError("Назначение нового членства доступно руководству совета.", 403);
+    if (data.globalRole && data.globalRole !== target.globalRole) {
+      if (data.globalRole === "SCHOOL_ADMIN" && user.globalRole !== "SCHOOL_ADMIN" && !isSpecialAdminEmail(user.email)) {
+        throw new DomainError("Назначение администратора школы доступно администратору.", 403);
+      }
+      if (SINGLE_COUNCIL_ROLES.has(data.globalRole)) {
+        await tx.user.updateMany({
+          where: { schoolId: actor.schoolId, globalRole: data.globalRole as GlobalRole, id: { not: data.userId } },
+          data: { globalRole: "STUDENT" }
+        });
+      }
+      await tx.user.update({ where: { id: data.userId }, data: { globalRole: data.globalRole as GlobalRole } });
+      await audit(tx, actor.id, data.departmentId, "GLOBAL_ROLE_CHANGED", data.userId, `${data.globalRole}: ${data.reason || "Назначение роли в команде"}`);
+    }
+    const result = await tx.membership.upsert({
+      where: { userId_departmentId: { userId: data.userId, departmentId: data.departmentId } },
+      create: { userId: data.userId, departmentId: data.departmentId, role: data.role, status: data.status },
+      update: { role: data.role, status: data.status }
+    });
+    await audit(tx, actor.id, data.departmentId, "MEMBERSHIP_CHANGED", result.id, `${data.role}${data.globalRole ? ` (${data.globalRole})` : ""} / ${data.status}: ${data.reason || "Обновление роли"}`);
     return result;
   });
 }
 export async function updateGlobalRole(actor: User, input: unknown) {
-  const data = z.object({ userId: id, role: z.enum(["STUDENT", "SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT"]), reason }).strict().parse(input);
+  const data = z.object({ userId: id, role: z.enum(GLOBAL_ROLES), reason: optionalText(1500) }).strict().parse(input);
   return transaction(async tx => {
-    await admin(tx, actor);
-    if (data.userId === actor.id) throw new DomainError("Свою роль изменяет другой администратор.", 403);
+    const fresh = await tx.user.findUnique({ where: { id: actor.id } });
+    if (!fresh || (!isGlobalManager(fresh.globalRole) && !isSpecialAdminEmail(fresh.email))) throw new DomainError("Действие доступно руководству школы.", 403);
+    if (data.role === "SCHOOL_ADMIN" && fresh.globalRole !== "SCHOOL_ADMIN" && !isSpecialAdminEmail(fresh.email)) {
+      throw new DomainError("Действие доступно администратору школы.", 403);
+    }
     const target = await tx.user.findUnique({ where: { id: data.userId } });
     if (!target || target.schoolId !== actor.schoolId) throw new DomainError("Пользователь недоступен.", 403);
-    await audit(tx, actor.id, null, "GLOBAL_ROLE_CHANGED", data.userId, `${data.role}: ${data.reason}`);
-    return tx.user.update({ where: { id: data.userId }, data: { globalRole: data.role }, select: { id: true, globalRole: true } });
+    if (SINGLE_COUNCIL_ROLES.has(data.role)) {
+      await tx.user.updateMany({
+        where: { schoolId: actor.schoolId, globalRole: data.role as GlobalRole, id: { not: data.userId } },
+        data: { globalRole: "STUDENT" }
+      });
+    }
+    await audit(tx, actor.id, null, "GLOBAL_ROLE_CHANGED", data.userId, `${data.role}: ${data.reason || "Назначение роли"}`);
+    return tx.user.update({ where: { id: data.userId }, data: { globalRole: data.role as GlobalRole }, select: { id: true, globalRole: true } });
   });
 }
 export async function createDepartment(actor: User, input: unknown) {

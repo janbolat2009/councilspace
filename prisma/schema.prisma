@@ -9,6 +9,8 @@ enum GlobalRole {
   SCHOOL_ADMIN
   PRESIDENT
   VICE_PRESIDENT
+  PRIME_MINISTER
+  COUNSELOR
 }
 enum DepartmentRole {
   MINISTER

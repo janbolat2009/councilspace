@@ -64,10 +64,72 @@ export function ReportsPanel({review=false}:{review?:boolean}) {
   const rows=data.reports.filter(r=>(review||r.userId===data.user.id)&&(!filter||r.status===filter)&&`${r.task.title} ${r.user.name}`.toLowerCase().includes(search.toLowerCase()));
   return <><div className="filter-bar"><select aria-label="Статус отчёта" value={filter} onChange={e=>setFilter(e.target.value)}><option value="">Все отчёты</option>{["DRAFT","PENDING","CHANGES_REQUESTED","APPROVED","REJECTED"].map(s=><option key={s} value={s}>{statuses[s]}</option>)}</select><p className="muted">Часы и баллы начисляются только после проверки.</p></div><Panel><div className="table-scroll"><table><thead><tr><th>Задача / участник</th><th>Дата работы</th><th>Заявлено</th><th>Подтверждено</th><th>Статус</th><th/></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td><button className="table-title" onClick={()=>open({type:"reportDetail",id:r.id})}>{r.task.title}</button><small>{r.user.name}</small></td><td>{displayDate(r.performedOn,"UTC")}</td><td>{hours(r.claimedMinutes)} ч</td><td>{r.approvedMinutes===null?"—":`${hours(r.approvedMinutes)} ч`}</td><td><Status value={r.status}/></td><td><button className="text-link" onClick={()=>open({type:"reportDetail",id:r.id})}>Открыть <ArrowUpRight size={14}/></button></td></tr>)}</tbody></table></div>{!rows.length&&<Empty title={review?"Очередь проверки пуста":"Отчётов пока нет"}>Отправьте отчёт о выполненной работе через кнопку «Создать».</Empty>}</Panel></>;
 }
+const COUNCIL_ROLE_META = [
+  { role: "PRESIDENT", title: "Президент", subtitle: "President · Глава совета" },
+  { role: "VICE_PRESIDENT", title: "Вице-президент", subtitle: "Vice President · Заместитель" },
+  { role: "PRIME_MINISTER", title: "Премьер-министр", subtitle: "Prime Minister · Координация" },
+  { role: "COUNSELOR", title: "Каунслер", subtitle: "Counselor · Советник" },
+] as const;
+const GLOBAL_ROLE_RANK: Record<string, number> = { PRESIDENT: 0, VICE_PRESIDENT: 1, PRIME_MINISTER: 2, COUNSELOR: 3, SCHOOL_ADMIN: 4, STUDENT: 5 };
+const DEPT_ROLE_RANK: Record<string, number> = { MINISTER: 0, VICE_MINISTER: 1, MEMBER: 2 };
 export function MembersPanel() {
   const {data,open,search}=useWorkspace();
-  const members=data.members.filter(m=>m.user.name?.toLowerCase().includes(search.toLowerCase()));
-  return <Panel title="Люди, с которыми всё получается" subtitle="Роли и участие в департаменте" action={<Badge>{members.length} участников</Badge>}><div className="table-scroll"><table><thead><tr><th>Участник</th><th>Класс</th><th>Роль</th><th>Статус</th><th/></tr></thead><tbody>{members.map(m=><tr key={m.id}><td><div className="person-cell"><Avatar name={m.user.name} image={m.user.image}/><span><strong>{m.user.name}</strong><small>{m.user.isDemo?"Демонстрационный профиль":m.user.interests}</small></span></div></td><td>{m.user.classroom||"—"}</td><td>{statuses[m.role]}</td><td><Status value={m.status}/></td><td>{data.manager&&m.userId!==data.user.id&&<Button variant="ghost" onClick={()=>open({type:"member",id:m.id})}>Управлять <ArrowUpRight size={14}/></Button>}</td></tr>)}</tbody></table></div>{!members.length&&<Empty title="Участники не найдены"/>}</Panel>;
+  const members=[...data.members]
+    .filter(m=>m.user.name?.toLowerCase().includes(search.toLowerCase()) || statuses[m.user.globalRole]?.toLowerCase().includes(search.toLowerCase()) || statuses[m.role]?.toLowerCase().includes(search.toLowerCase()))
+    .sort((a,b)=>(GLOBAL_ROLE_RANK[a.user.globalRole]??9)-(GLOBAL_ROLE_RANK[b.user.globalRole]??9)||(DEPT_ROLE_RANK[a.role]??9)-(DEPT_ROLE_RANK[b.role]??9));
+  return <>
+    <div className="council-roles-grid">
+      {COUNCIL_ROLE_META.map(item => {
+        const holder = data.leaders?.find(l => l.globalRole === item.role) || data.members.find(m => m.user.globalRole === item.role)?.user;
+        return <div className={cn("council-role-card", holder && "assigned")} key={item.role}>
+          <div className="row spread">
+            <Badge tone={holder ? "red" : "neutral"}>{item.title}</Badge>
+            {data.manager && <button className="text-link" onClick={() => open({ type: "assignCouncilRole", id: item.role })}>{holder ? "Изменить" : "Назначить"} <ArrowUpRight size={13}/></button>}
+          </div>
+          <div className="council-role-person">
+            <Avatar name={holder?.name || item.title.slice(0, 2)} image={holder?.image}/>
+            <div>
+              <strong>{holder?.name || "Позиция открыта"}</strong>
+              <small>{holder ? `${holder.classroom ? `${holder.classroom} · ` : ""}${item.subtitle}` : item.subtitle}</small>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+    <Panel title="Люди, с которыми всё получается" subtitle="Роли в совете и участие в департаменте" action={<Badge>{members.length} участников</Badge>}>
+      <div className="table-scroll">
+        <table>
+          <thead><tr><th>Участник</th><th>Класс</th><th>Роль</th><th>Статус</th><th/></tr></thead>
+          <tbody>
+            {members.map(m => {
+              const hasCouncilRole = ["PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"].includes(m.user.globalRole);
+              return <tr key={m.id}>
+                <td>
+                  <div className="person-cell">
+                    <Avatar name={m.user.name} image={m.user.image}/>
+                    <span>
+                      <strong>{m.user.name}{m.userId === data.user.id && <Badge>Вы</Badge>}</strong>
+                      <small>{m.user.isDemo ? "Демонстрационный профиль" : (m.user.interests || "Участник Student Council")}</small>
+                    </span>
+                  </div>
+                </td>
+                <td>{m.user.classroom || "—"}</td>
+                <td>
+                  <div className="row wrap">
+                    {hasCouncilRole && <Badge tone="red">{statuses[m.user.globalRole]}</Badge>}
+                    <Badge tone={m.role !== "MEMBER" ? "blue" : "neutral"}>{statuses[m.role]}</Badge>
+                  </div>
+                </td>
+                <td><Status value={m.status}/></td>
+                <td>{data.manager && <Button variant="ghost" onClick={() => open({ type: "member", id: m.id })}>Управлять <ArrowUpRight size={14}/></Button>}</td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+      {!members.length && <Empty title="Участники не найдены"/>}
+    </Panel>
+  </>;
 }
 export function LeaderboardPanel() {
   const {data,navigate,search}=useWorkspace();
@@ -112,7 +174,7 @@ export function ProfilePanel() {
 export function SettingsPanel() {
   const {data,mutate,open}=useWorkspace(),school=data.school;
   return <div className="settings-grid"><Panel title="Правила начисления" subtitle={`Текущая версия: ${data.department?.ruleVersion}`}><div className="padded"><p>Новая ставка применяется к следующим подтверждениям. История начислений сохраняет прежние ставки.</p><Form fields={[{name:"rate",label:"Баллы за час",type:"number",value:Number(data.department?.rate||10),min:0,max:10000,step:.01,required:true},{name:"reason",label:"Причина изменения",required:true}]} onSubmit={v=>mutate("updateRate",{departmentId:data.department?.id,rate:Number(v.rate),reason:v.reason})}/></div></Panel>
-    {data.user.globalRole==="SCHOOL_ADMIN"&&<><Panel title="Школа и оформление"><div className="padded"><Form columns fields={[{name:"name",label:"Название школы / совета",value:school.name,required:true},{name:"logoUrl",label:"Логотип: /logo.png или HTTPS URL",value:school.logoUrl,required:true},{name:"navy",label:"Тёмный цвет",type:"color",value:school.navy},{name:"accent",label:"Акцент",type:"color",value:school.accent},{name:"cream",label:"Кремовый цвет",type:"color",value:school.cream},{name:"timezone",label:"Часовой пояс IANA",value:school.timezone,required:true},{name:"dailyLimit",label:"Предел минут в сутки",type:"number",value:school.dailyLimit,min:60,max:1440,required:true},{name:"academicStart",label:"Начало учебного года (ММ-ДД)",value:school.academicStart,required:true},{name:"terms",label:"Четверти: JSON массив 4 пар ММ-ДД",type:"textarea",value:JSON.stringify(school.terms),required:true}]} onSubmit={v=>mutate("updateSchool",{...v,dailyLimit:Number(v.dailyLimit),terms:JSON.parse(v.terms)})}/></div></Panel><Panel title="Департаменты" action={<Button variant="outline" onClick={()=>open({type:"department"})}><Plus size={15}/>Добавить</Button>}>{data.allDepartments.map(d=><div className="padded border-bottom" key={d.id}><strong>{d.name}</strong><p>{d.description}</p></div>)}</Panel><Panel title="Роли школы и назначение руководства"><div className="padded">{data.schoolUsers.map(u=><div className="admin-user-row" key={u.id}><div><strong>{u.name}</strong><small>{u.email} · {statuses[u.globalRole]}</small></div>{u.id!==data.user.id&&<Button variant="outline" onClick={()=>open({type:"globalRole",id:u.id})}>Назначить</Button>}</div>)}</div></Panel></>}
+    {(data.user.globalRole==="SCHOOL_ADMIN"||data.user.isAdmin)&&<><Panel title="Школа и оформление"><div className="padded"><Form columns fields={[{name:"name",label:"Название школы / совета",value:school.name,required:true},{name:"logoUrl",label:"Логотип: /logo.png или HTTPS URL",value:school.logoUrl,required:true},{name:"navy",label:"Тёмный цвет",type:"color",value:school.navy},{name:"accent",label:"Акцент",type:"color",value:school.accent},{name:"cream",label:"Кремовый цвет",type:"color",value:school.cream},{name:"timezone",label:"Часовой пояс IANA",value:school.timezone,required:true},{name:"dailyLimit",label:"Предел минут в сутки",type:"number",value:school.dailyLimit,min:60,max:1440,required:true},{name:"academicStart",label:"Начало учебного года (ММ-ДД)",value:school.academicStart,required:true},{name:"terms",label:"Четверти: JSON массив 4 пар ММ-ДД",type:"textarea",value:JSON.stringify(school.terms),required:true}]} onSubmit={v=>mutate("updateSchool",{...v,dailyLimit:Number(v.dailyLimit),terms:JSON.parse(v.terms)})}/></div></Panel><Panel title="Департаменты" action={<Button variant="outline" onClick={()=>open({type:"department"})}><Plus size={15}/>Добавить</Button>}>{data.allDepartments.map(d=><div className="padded border-bottom" key={d.id}><strong>{d.name}</strong><p>{d.description}</p></div>)}</Panel><Panel title="Роли школы и назначение руководства"><div className="padded">{data.schoolUsers.map(u=><div className="admin-user-row" key={u.id}><div><strong>{u.name}</strong><small>{u.email} · {statuses[u.globalRole]}</small></div><Button variant="outline" onClick={()=>open({type:"globalRole",id:u.id})}>Назначить</Button></div>)}</div></Panel></>}
   </div>;
 }
 

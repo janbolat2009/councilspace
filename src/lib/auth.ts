@@ -4,7 +4,7 @@ import type { AdapterUser } from "next-auth/adapters";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
-import { DomainError } from "./policy";
+import { DomainError, isGlobalManager } from "./policy";
 import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment, isSpecialAdminEmail, ensureMinisterPrivileges } from "@/server/accounts";
 
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
@@ -133,7 +133,7 @@ export async function currentUser() {
     user = await db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, isDemo: false } });
   }
   if (user && isSpecialAdminEmail(user.email)) {
-    if (user.globalRole !== "SCHOOL_ADMIN" || !user.onboarded) {
+    if (!isGlobalManager(user.globalRole) || !user.onboarded) {
       await ensureMinisterPrivileges(user.id, user.schoolId);
       user = await db.user.findUnique({ where: { id: user.id } });
     }

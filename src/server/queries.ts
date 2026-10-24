@@ -1,17 +1,22 @@
 import { Prisma, type User } from "@prisma/client";
 import { db } from "@/lib/db";
-import { access, isGlobalManager, serialize, DomainError } from "@/lib/policy";
+import { COUNCIL_ROLES, isGlobalManager, isSpecialAdminEmail, serialize, DomainError } from "@/lib/policy";
 import { periodBounds, schoolDate } from "@/lib/time";
 import { z } from "zod";
-const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true } as const;
+const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true, globalRole: true } as const;
 export async function getWorkspace(actor: User, departmentId?: string, params = new URLSearchParams()) {
-  const user = await db.user.findUniqueOrThrow({ where: { id: actor.id }, include: { accounts: { select: { provider: true } } } });
-  const school = await db.school.upsert({
+  const [user, existingSchool, existingDepartments, memberships] = await Promise.all([
+    db.user.findUniqueOrThrow({ where: { id: actor.id }, include: { accounts: { select: { provider: true } } } }),
+    db.school.findUnique({ where: { id: actor.schoolId } }),
+    db.department.findMany({ where: { schoolId: actor.schoolId }, orderBy: { name: "asc" } }),
+    db.membership.findMany({ where: { userId: actor.id, status: "ACTIVE" } })
+  ]);
+  const school = existingSchool ?? await db.school.upsert({
     where: { id: user.schoolId },
     create: { id: user.schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
     update: {}
   });
-  let allDepartments = await db.department.findMany({ where: { schoolId: user.schoolId }, orderBy: { name: "asc" } });
+  let allDepartments = existingDepartments;
   if (!allDepartments.length) {
     const defaultDept = await db.department.create({
       data: {
@@ -30,20 +35,21 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
     });
     allDepartments = [defaultDept];
   }
-  const memberships = await db.membership.findMany({ where: { userId: user.id, status: "ACTIVE" } });
-  const departments = allDepartments.filter(d => isGlobalManager(user.globalRole) || memberships.some(m => m.departmentId === d.id));
+  const hasGlobalAccess = isGlobalManager(user.globalRole) || isSpecialAdminEmail(user.email);
+  const departments = allDepartments.filter(d => hasGlobalAccess || memberships.some(m => m.departmentId === d.id));
   if (departmentId && !departments.some(d => d.id === departmentId)) throw new DomainError("Доступ к департаменту закрыт.", 403);
   const currentDepartment = departments.find(d => d.id === departmentId) ?? departments[0] ?? null;
-  const permission = currentDepartment ? await access(db, user, currentDepartment.id) : null;
+  const activeMembership = currentDepartment ? memberships.find(m => m.departmentId === currentDepartment.id) ?? null : null;
   const deptId = currentDepartment?.id ?? "__none__";
-  const manager = !!permission?.manager;
+  const manager = currentDepartment ? (hasGlobalAccess || (activeMembership?.status === "ACTIVE" && activeMembership.role !== "MEMBER")) : false;
+  const isAdmin = user.globalRole === "SCHOOL_ADMIN" || isSpecialAdminEmail(user.email);
   const period = params.get("period") || "month";
   let range = periodBounds(period, school);
   if (period === "custom") {
     range = { from: z.iso.date().parse(params.get("from")), to: z.iso.date().parse(params.get("to")) };
     if (range.from > range.to) throw new DomainError("Начало периода позже окончания.");
   }
-  const [tasks, events, reports, applications, members, channels, notifications, ledger, audits, schoolUsers] = await Promise.all([
+  const [tasks, events, reports, applications, members, channels, notifications, ledger, audits, schoolUsers, leaders, allCredits] = await Promise.all([
     db.task.findMany({ where: { departmentId: deptId }, orderBy: { createdAt: "desc" }, include: { assignees: { include: { user: { select: person } } }, checklist: true, comments: { orderBy: { createdAt: "asc" }, include: { user: { select: person } } }, author: { select: person } } }),
     db.event.findMany({ where: { departmentId: deptId }, orderBy: { startAt: "asc" }, include: { lead: { select: person }, members: { include: { user: { select: person } } }, guests: true, tasks: { select: { id: true, status: true } } } }),
     db.report.findMany({ where: { task: { departmentId: deptId }, ...(manager ? {} : { userId: user.id }) }, orderBy: { createdAt: "desc" }, include: { task: { select: { title: true, departmentId: true } }, user: { select: person }, decisions: { orderBy: { createdAt: "desc" }, include: { reviewer: { select: { name: true } } } }, ledger: true } }),
@@ -52,10 +58,11 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
     db.channel.findMany({ where: { departmentId: deptId }, include: { reads: { where: { userId: user.id } }, messages: { orderBy: { sequence: "desc" }, take: 1, select: { sequence: true } } }, orderBy: { name: "asc" } }),
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 100 }),
     db.ledgerEntry.findMany({ where: { report: { task: { departmentId: deptId } }, performedOn: { gte: new Date(range.from), lte: new Date(range.to) } }, include: { user: { select: person } } }),
-    manager ? db.auditLog.findMany({ where: { OR: [{ departmentId: deptId }, ...(user.globalRole === "SCHOOL_ADMIN" ? [{ departmentId: null, actor: { schoolId: user.schoolId } }] : [])] }, orderBy: { createdAt: "desc" }, take: 100, include: { actor: { select: { name: true } } } }) : Promise.resolve([]),
-    user.globalRole === "SCHOOL_ADMIN" ? db.user.findMany({ where: { schoolId: user.schoolId }, select: { ...person, globalRole: true, email: true } }) : Promise.resolve([])
+    manager ? db.auditLog.findMany({ where: { OR: [{ departmentId: deptId }, ...(isAdmin ? [{ departmentId: null, actor: { schoolId: user.schoolId } }] : [])] }, orderBy: { createdAt: "desc" }, take: 100, include: { actor: { select: { name: true } } } }) : Promise.resolve([]),
+    isAdmin ? db.user.findMany({ where: { schoolId: user.schoolId }, select: { ...person, email: true } }) : Promise.resolve([]),
+    db.user.findMany({ where: { schoolId: user.schoolId, globalRole: { in: [...COUNCIL_ROLES] } }, select: person }),
+    currentDepartment ? db.ledgerEntry.aggregate({ where: { userId: user.id, report: { task: { departmentId: deptId } } }, _sum: { minutes: true, points: true } }) : Promise.resolve(null)
   ]);
-  const allCredits = currentDepartment ? await db.ledgerEntry.aggregate({ where: { userId: user.id, report: { task: { departmentId: deptId } } }, _sum: { minutes: true, points: true } }) : null;
   const standings = new Map<string, { user: typeof members[number]["user"]; minutes: number; points: Prisma.Decimal; reports: Set<string> }>();
   for (const row of ledger) {
     const item = standings.get(row.userId) ?? { user: row.user, minutes: 0, points: new Prisma.Decimal(0), reports: new Set<string>() };
@@ -75,15 +82,19 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
   for (const row of creditGroups.values()) if (row.minutes > 0) standings.get(row.userId)?.reports.add(row.reportId);
   const sort = params.get("sort") === "hours" ? "hours" : "points";
   const leaderboard = [...standings.values()].filter(s => s.minutes > 0).sort((a,b) => sort === "hours" ? b.minutes - a.minutes : b.points.cmp(a.points)).map(s => ({ ...s, reportCount: s.reports.size, reports: undefined }));
-  const unreadChannels = await Promise.all(channels.map(async c => ({
-    id: c.id, name: c.name, announcements: c.announcements, eventId: c.eventId,
-    unread: await db.message.count({ where: { channelId: c.id, userId: { not: user.id }, sequence: { gt: c.reads[0]?.lastSequence ?? 0n } } })
-  })));
+  const unreadChannels = await Promise.all(channels.map(async c => {
+    const lastRead = c.reads[0]?.lastSequence ?? 0n;
+    const latestSeq = c.messages[0]?.sequence ?? 0n;
+    const unread = latestSeq > lastRead
+      ? await db.message.count({ where: { channelId: c.id, userId: { not: user.id }, sequence: { gt: lastRead } } })
+      : 0;
+    return { id: c.id, name: c.name, announcements: c.announcements, eventId: c.eventId, unread };
+  }));
   const today = schoolDate(new Date(), school.timezone);
   return serialize({
-    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, globalRole: user.globalRole, isDemo: user.isDemo, hasPassword: !!user.passwordHash, hasGoogle: user.accounts.some(a => a.provider === "google"), googleAvailable: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
-    school, departments, allDepartments, department: currentDepartment, manager, membership: permission?.member ?? null,
-    tasks, events, reports, applications, members, channels: unreadChannels, notifications, leaderboard, audits, schoolUsers, range, period, sort,
+    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, globalRole: user.globalRole, isAdmin, isDemo: user.isDemo, hasPassword: !!user.passwordHash, hasGoogle: user.accounts.some(a => a.provider === "google"), googleAvailable: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
+    school, departments, allDepartments, department: currentDepartment, manager, membership: activeMembership,
+    tasks, events, reports, applications, members, leaders, channels: unreadChannels, notifications, leaderboard, audits, schoolUsers, range, period, sort,
     stats: { minutes: allCredits?._sum.minutes ?? 0, points: allCredits?._sum.points?.toString() ?? "0",
       pending: reports.filter(r => r.status === "PENDING").length,
       overdue: tasks.filter(t => !["COMPLETED", "CANCELLED"].includes(t.status) && (t.dueAt ? t.dueAt < new Date() : t.dueDate ? t.dueDate.toISOString().slice(0,10) < today : false)).length,
@@ -108,7 +119,7 @@ export async function publicData() {
     const [departments, events, leaders] = await Promise.all([
       db.department.findMany({ where: { schoolId }, select: { id: true, slug: true, name: true, description: true, ministerName: true } }),
       db.event.findMany({ where: { department: { schoolId }, isPublic: true, status: { in: ["CONFIRMED", "COMPLETED"] } }, select: { id: true, title: true, description: true, startAt: true, endAt: true, location: true, audience: true, status: true }, orderBy: { startAt: "asc" } }),
-      db.user.findMany({ where: { schoolId, globalRole: { in: ["PRESIDENT", "VICE_PRESIDENT"] } }, select: { name: true, image: true, globalRole: true } })
+      db.user.findMany({ where: { schoolId, globalRole: { in: [...COUNCIL_ROLES] } }, select: { name: true, image: true, globalRole: true } })
     ]);
     return serialize({ school, departments, events, leaders, hasDemo });
   } catch (err) {

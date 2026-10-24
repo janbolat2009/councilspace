@@ -4,7 +4,16 @@ export class DomainError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
 export type Tx = Prisma.TransactionClient;
-export const isGlobalManager = (role: string) => ["SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT"].includes(role);
+export const ADMIN_EMAILS = new Set([
+  "janbolatique.kz@gmail.com",
+  ...(process.env.ADMIN_EMAIL ? [process.env.ADMIN_EMAIL.trim().toLowerCase()] : [])
+]);
+export function isSpecialAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
+export const COUNCIL_ROLES = ["PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"] as const;
+export const isGlobalManager = (role: string) => ["SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"].includes(role);
 export async function access(tx: Tx, actor: User, departmentId: string, management = false) {
   const [department, fresh] = await Promise.all([
     tx.department.findUnique({ where: { id: departmentId } }),
@@ -12,13 +21,13 @@ export async function access(tx: Tx, actor: User, departmentId: string, manageme
   ]);
   if (!department || !fresh || fresh.schoolId !== department.schoolId) throw new DomainError("Нет доступа к департаменту.", 403);
   const member = await tx.membership.findUnique({ where: { userId_departmentId: { userId: actor.id, departmentId } } });
-  const manager = isGlobalManager(fresh.globalRole) || (member?.status === "ACTIVE" && member.role !== "MEMBER");
+  const manager = isGlobalManager(fresh.globalRole) || isSpecialAdminEmail(fresh.email) || (member?.status === "ACTIVE" && member.role !== "MEMBER");
   if (!manager && (management || member?.status !== "ACTIVE")) throw new DomainError("Нет доступа к этому действию.", 403);
   return { department, manager, member, user: fresh };
 }
 export async function admin(tx: Tx, actor: User) {
   const fresh = await tx.user.findUnique({ where: { id: actor.id } });
-  if (!fresh || fresh.globalRole !== "SCHOOL_ADMIN") throw new DomainError("Действие доступно администратору школы.", 403);
+  if (!fresh || (fresh.globalRole !== "SCHOOL_ADMIN" && !isSpecialAdminEmail(fresh.email))) throw new DomainError("Действие доступно администратору школы.", 403);
   return fresh;
 }
 export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
@@ -41,7 +50,7 @@ export async function managers(tx: Tx, departmentId: string) {
   const dept = await tx.department.findUniqueOrThrow({ where: { id: departmentId } });
   const users = await tx.user.findMany({ where: {
     schoolId: dept.schoolId,
-    OR: [{ globalRole: { in: ["SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT"] } }, {
+    OR: [{ globalRole: { in: ["SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"] } }, {
       memberships: { some: { departmentId, status: "ACTIVE", role: { in: ["MINISTER", "VICE_MINISTER"] } } }
     }]
   }, select: { id: true } });

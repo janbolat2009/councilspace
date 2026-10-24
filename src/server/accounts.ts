@@ -3,24 +3,15 @@ import type { Account, Profile } from "next-auth";
 import { Prisma, type User } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
-import { DomainError, transaction } from "@/lib/policy";
+import { ADMIN_EMAILS, DomainError, isGlobalManager, isSpecialAdminEmail, transaction } from "@/lib/policy";
 import { hashPassword, verifyPassword } from "@/lib/password";
+export { ADMIN_EMAILS, isSpecialAdminEmail };
 export const emailSchema = z.string().trim().toLowerCase().email("Проверьте адрес email.").max(254);
 export const passwordSchema = z.string().min(10, "Пароль должен содержать минимум 10 символов.").max(128, "Пароль не длиннее 128 символов.");
 export const registrationSchema = z.object({
   name: z.string().trim().min(2, "Укажите ваше имя.").max(80),
   email: emailSchema, password: passwordSchema, confirmPassword: z.string()
 }).strict().refine(v => v.password === v.confirmPassword, { path: ["confirmPassword"], message: "Пароли не совпадают." });
-
-export const ADMIN_EMAILS = new Set([
-  "janbolatique.kz@gmail.com",
-  ...(process.env.ADMIN_EMAIL ? [process.env.ADMIN_EMAIL.trim().toLowerCase()] : [])
-]);
-
-export function isSpecialAdminEmail(email?: string | null): boolean {
-  if (!email) return false;
-  return ADMIN_EMAILS.has(email.trim().toLowerCase());
-}
 
 export async function ensureMinisterPrivileges(userId: string, schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
   try {
@@ -30,7 +21,7 @@ export async function ensureMinisterPrivileges(userId: string, schoolId = proces
     const updated = await db.user.update({
       where: { id: userId },
       data: {
-        globalRole: "SCHOOL_ADMIN",
+        globalRole: isGlobalManager(user.globalRole) ? user.globalRole : "SCHOOL_ADMIN",
         onboarded: true,
       }
     });
@@ -67,6 +58,12 @@ export async function ensureAuthEnvironment(schoolId = process.env.COUNCIL_SCHOO
     if (!schemaInitialized) {
       schemaInitialized = (async () => {
         try {
+          await db.$executeRawUnsafe(`ALTER TYPE "GlobalRole" ADD VALUE IF NOT EXISTS 'PRIME_MINISTER'`);
+          await db.$executeRawUnsafe(`ALTER TYPE "GlobalRole" ADD VALUE IF NOT EXISTS 'COUNSELOR'`);
+        } catch (err) {
+          console.warn("Schema auto-check GlobalRole warning:", err);
+        }
+        try {
           await db.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT`);
         } catch (err) {
           console.warn("Schema auto-check passwordHash warning:", err);
@@ -86,18 +83,18 @@ export async function ensureAuthEnvironment(schoolId = process.env.COUNCIL_SCHOO
         } catch (err) {
           console.warn("Schema auto-check email index warning:", err);
         }
+        try {
+          await db.school.upsert({
+            where: { id: schoolId },
+            create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
+            update: {}
+          });
+        } catch (err) {
+          console.warn("Schema auto-check school upsert warning:", err);
+        }
       })();
     }
     await schemaInitialized;
-    try {
-      await db.school.upsert({
-        where: { id: schoolId },
-        create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
-        update: {}
-      });
-    } catch (err) {
-      console.warn("Schema auto-check school upsert warning:", err);
-    }
   }
 }
 export async function ensureSchoolDepartments(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
