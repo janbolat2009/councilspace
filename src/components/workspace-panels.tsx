@@ -8,6 +8,7 @@ import { Avatar, Badge, Button, cn, Empty, Panel, SectionLink, Status, statuses 
 import { Form, ConfirmAction } from "./forms";
 import { displayDate } from "@/lib/time";
 import { PasswordSettings } from "./password-settings";
+import { AcademicYearPlan } from "./academic-year-plan";
 const hours = (minutes: number) => (minutes / 60).toLocaleString("ru", { maximumFractionDigits:2 });
 function dateCaption(value: string | null, timezone: string, dateOnly = false) {
   return value ? dateOnly ? new Date(value).toLocaleDateString("ru",{day:"numeric",month:"short",timeZone:"UTC"}) : formatInTimeZone(new Date(value),timezone,"d MMM, HH:mm",{locale:ru}) : "Без дедлайна";
@@ -35,6 +36,7 @@ export function Overview() {
     <div className="dashboard-right"><Panel title="Скоро в календаре" action={<button className="icon-button" aria-label="Все мероприятия" onClick={()=>navigate("events")}><ArrowUpRight size={18}/></button>}><div className="event-list">{nextEvents.map((event,i)=><button className="event-preview" key={event.id} onClick={()=>open({type:"eventDetail",id:event.id})}><div className={`event-date date-${i}`}><strong>{formatInTimeZone(event.startAt,data.school.timezone,"dd")}</strong><span>{formatInTimeZone(event.startAt,data.school.timezone,"MMM",{locale:ru})}</span></div><div><strong>{event.title}</strong><small><Clock3 size={12}/>{formatInTimeZone(event.startAt,data.school.timezone,"HH:mm")}<span>·</span>{event.location}</small><Badge tone={event.status==="CONFIRMED"?"green":"neutral"}>{event.status==="CONFIRMED"?"Готовимся":"Планируем"} · {event.tasks.filter(t=>t.status==="COMPLETED").length}/{event.tasks.length} задач</Badge></div></button>)}{!nextEvents.length&&<Empty title="Новые события впереди"/>}</div><button className="panel-add" onClick={()=>navigate("calendar")}>Весь календарь <ArrowRight size={16}/></button></Panel>
     <section className="idea-note"><span className="idea-icon"><Lightbulb size={23}/></span><div><span className="eyebrow">ЕСТЬ ИДЕЯ?</span><h3>Начни с предложения.</h3><p>Игра, встреча или новый формат —<br/>создадим это вместе.</p><button onClick={()=>open({type:"event"})}>Предложить мероприятие <ArrowUpRight size={15}/></button></div><span className="note-decoration">✳</span></section>
     <div className="team-strip"><div className="avatar-stack">{data.members.filter(m=>m.status==="ACTIVE").slice(0,4).map(m=><Avatar key={m.id} name={m.user.name} small/>)}</div><div><strong>{data.members.filter(m=>m.status==="ACTIVE").length} участников</strong><button onClick={()=>navigate("members")}>Одна команда <ArrowUpRight size={12}/></button></div></div></div></div>
+    {data.department?.slug === "intellectual-development" && <AcademicYearPlan />}
   </div>;
 }
 export function TasksPanel() {
