@@ -8,7 +8,7 @@ export const PUBLIC_MINISTER_NAMES: Readonly<Record<string, string>> = {
   mentorship: "Aiya Zhumagali"
 };
 
-export const PUBLIC_COUNSELOR_NAME = "Medina";
+export const PUBLIC_COUNSELOR_NAME = "Medina Alzhanova";
 
 export function publicMinisterName(slug: string, storedName = "") {
   return PUBLIC_MINISTER_NAMES[slug] ?? storedName;
