@@ -1,8 +1,9 @@
 import { Prisma, type User } from "@prisma/client";
 import { db } from "@/lib/db";
-import { COUNCIL_ROLES, isGlobalManager, isSpecialAdminEmail, serialize, DomainError } from "@/lib/policy";
+import { COUNCIL_ROLES, isGlobalManager, serialize, DomainError } from "@/lib/policy";
 import { periodBounds, schoolDate } from "@/lib/time";
 import { z } from "zod";
+import { DEPARTMENTS } from "@/lib/departments";
 const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true, globalRole: true } as const;
 export async function getWorkspace(actor: User, departmentId?: string, params = new URLSearchParams()) {
   const [user, existingSchool, existingDepartments, memberships] = await Promise.all([
@@ -16,33 +17,15 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
     create: { id: user.schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
     update: {}
   });
-  let allDepartments = existingDepartments;
-  if (!allDepartments.length) {
-    const defaultDept = await db.department.create({
-      data: {
-        schoolId: user.schoolId,
-        slug: "intellectual-development",
-        name: "Intellectual Development",
-        ministerName: "Zhanbolat",
-        description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей.",
-        channels: {
-          create: [
-            { name: "General" },
-            { name: "Announcements", announcements: true }
-          ]
-        }
-      }
-    });
-    allDepartments = [defaultDept];
-  }
-  const hasGlobalAccess = isGlobalManager(user.globalRole) || isSpecialAdminEmail(user.email);
+  const allDepartments = existingDepartments;
+  const hasGlobalAccess = isGlobalManager(user.globalRole);
   const departments = allDepartments.filter(d => hasGlobalAccess || memberships.some(m => m.departmentId === d.id));
   if (departmentId && !departments.some(d => d.id === departmentId)) throw new DomainError("Доступ к департаменту закрыт.", 403);
   const currentDepartment = departments.find(d => d.id === departmentId) ?? departments[0] ?? null;
   const activeMembership = currentDepartment ? memberships.find(m => m.departmentId === currentDepartment.id) ?? null : null;
   const deptId = currentDepartment?.id ?? "__none__";
   const manager = currentDepartment ? (hasGlobalAccess || (activeMembership?.status === "ACTIVE" && activeMembership.role !== "MEMBER")) : false;
-  const isAdmin = user.globalRole === "SCHOOL_ADMIN" || isSpecialAdminEmail(user.email);
+  const isAdmin = user.globalRole === "SCHOOL_ADMIN";
   const period = params.get("period") || "month";
   let range = periodBounds(period, school);
   if (period === "custom") {
@@ -53,7 +36,7 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
     db.task.findMany({ where: { departmentId: deptId }, orderBy: { createdAt: "desc" }, include: { assignees: { include: { user: { select: person } } }, checklist: true, comments: { orderBy: { createdAt: "asc" }, include: { user: { select: person } } }, author: { select: person } } }),
     db.event.findMany({ where: { departmentId: deptId }, orderBy: { startAt: "asc" }, include: { lead: { select: person }, members: { include: { user: { select: person } } }, guests: true, tasks: { select: { id: true, status: true } } } }),
     db.report.findMany({ where: { task: { departmentId: deptId }, ...(manager ? {} : { userId: user.id }) }, orderBy: { createdAt: "desc" }, include: { task: { select: { title: true, departmentId: true } }, user: { select: person }, decisions: { orderBy: { createdAt: "desc" }, include: { reviewer: { select: { name: true } } } }, ledger: true } }),
-    db.application.findMany({ where: manager ? { departmentId: deptId } : { userId: user.id }, orderBy: { createdAt: "desc" }, include: { user: { select: person }, department: { select: { name: true } } } }),
+    db.application.findMany({ where: manager ? { departmentId: deptId } : { userId: user.id, departmentId: currentDepartment?.id || user.registrationDepartmentId || "__none__" }, orderBy: { createdAt: "desc" }, include: { user: { select: person }, department: { select: { name: true } } } }),
     db.membership.findMany({ where: { departmentId: deptId, ...(manager ? {} : { status: "ACTIVE" as const }) }, include: { user: { select: person } }, orderBy: { joinedAt: "asc" } }),
     db.channel.findMany({ where: { departmentId: deptId }, include: { reads: { where: { userId: user.id } }, messages: { orderBy: { sequence: "desc" }, take: 1, select: { sequence: true } } }, orderBy: { name: "asc" } }),
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 100 }),
@@ -92,8 +75,8 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
   }));
   const today = schoolDate(new Date(), school.timezone);
   return serialize({
-    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, globalRole: user.globalRole, isAdmin, isDemo: user.isDemo, hasPassword: !!user.passwordHash, hasGoogle: user.accounts.some(a => a.provider === "google"), googleAvailable: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
-    school, departments, allDepartments, department: currentDepartment, manager, membership: activeMembership,
+    user: { id: user.id, name: user.name, image: user.image, classroom: user.classroom, interests: user.interests, onboarded: user.onboarded, registrationDepartmentId: user.registrationDepartmentId, globalRole: user.globalRole, isAdmin, isDemo: user.isDemo, hasPassword: !!user.passwordHash, hasGoogle: user.accounts.some(a => a.provider === "google"), googleAvailable: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
+    school, departments, allDepartments: isAdmin ? allDepartments : allDepartments.filter(d => d.id === user.registrationDepartmentId || memberships.some(m => m.departmentId === d.id)), department: currentDepartment, manager, membership: activeMembership,
     tasks, events, reports, applications, members, leaders, channels: unreadChannels, notifications, leaderboard, audits, schoolUsers, range, period, sort,
     stats: { minutes: allCredits?._sum.minutes ?? 0, points: allCredits?._sum.points?.toString() ?? "0",
       pending: reports.filter(r => r.status === "PENDING").length,
@@ -110,7 +93,7 @@ export async function publicData() {
     if (!school) {
       return serialize({
         school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
-        departments: [{ id: "intellectual-dept", slug: "intellectual-development", name: "Intellectual Development", ministerName: "Zhanbolat", description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей." }],
+        departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: "" })),
         events: [],
         leaders: [],
         hasDemo
@@ -126,7 +109,7 @@ export async function publicData() {
     console.error("publicData error:", err);
     return serialize({
       school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
-      departments: [{ id: "intellectual-dept", slug: "intellectual-development", name: "Intellectual Development", ministerName: "Zhanbolat", description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей." }],
+      departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: "" })),
       events: [],
       leaders: [],
       hasDemo

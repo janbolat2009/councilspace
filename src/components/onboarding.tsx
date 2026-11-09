@@ -8,12 +8,15 @@ import { Button } from "./ui";
 type OnboardingProps = {
   user: { name: string; classroom: string; interests: string; image: string; onboarded?: boolean };
   departments: { id: string; name: string; description: string }[];
+  initialDepartmentId: string;
+  locked: boolean;
 };
-export function Onboarding({ user, departments }: OnboardingProps) {
+export function Onboarding({ user, departments, initialDepartmentId, locked }: OnboardingProps) {
   const router = useRouter();
   const [step, setStep] = useState(user.onboarded && user.classroom.trim() ? 2 : 1);
   const [profileState, setProfileState] = useState({ name: user.name, classroom: user.classroom, interests: user.interests });
-  const [department, setDepartment] = useState(departments[0]?.id || "");
+  const [department, setDepartment] = useState(initialDepartmentId);
+  const [departmentLocked, setDepartmentLocked] = useState(locked);
   async function save(action: string, data: unknown) {
     const response = await fetch("/api/council", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, data }) });
     const result = await response.json();
@@ -34,7 +37,7 @@ export function Onboarding({ user, departments }: OnboardingProps) {
         <span className="onboarding-icon">{step === 1 ? <GraduationCap size={28}/> : <Sparkles size={28}/>}</span>
         {step === 2 && <Button type="button" variant="ghost" onClick={() => setStep(1)}><ArrowLeft size={16}/>Назад к профилю</Button>}
       </div>
-      <h1>{step === 1 ? "Расскажи о себе" : "Выбери свой департамент"}</h1>
+      <h1>{step === 1 ? "Расскажи о себе" : departmentLocked ? "Заявка в ваш департамент" : "Выбери свой департамент"}</h1>
       <p>{step === 1 ? "Аккаунт успешно создан! Заполни короткую анкету ученика, чтобы продолжить." : "Отправь заявку в департамент совета. Руководство рассмотрит её и откроет доступ к командной работе."}</p>
       {step === 1 ? (
         <Form
@@ -42,11 +45,17 @@ export function Onboarding({ user, departments }: OnboardingProps) {
           fields={[
             { name: "name", label: "Имя и фамилия", value: profileState.name, placeholder: "Как к тебе обращаться?", required: true },
             { name: "classroom", label: "Класс / параллель", value: profileState.classroom, placeholder: "Например, 10 A", required: true },
-            { name: "interests", label: "Твои интересы и увлечения", type: "textarea", value: profileState.interests, placeholder: "Наука, дебаты, программирование, организация мероприятий…" }
+            { name: "interests", label: "Твои интересы и увлечения", type: "textarea", value: profileState.interests, placeholder: "Наука, дебаты, программирование, организация мероприятий…" },
+            ...(!departmentLocked ? [{ name: "departmentId", label: "Ваш департамент", required: true, value: department, options: [{ value: "", label: "Выберите департамент" }, ...departments.map(d => ({ value: d.id, label: d.name }))] }] : [])
           ]}
-          submitLabel="Сохранить и перейти к выбору команды →"
+          submitLabel="Сохранить и перейти к заявке →"
           onSubmit={async values => {
-            await save("saveProfile", { ...values, image: user.image });
+            if (!departmentLocked) {
+              await save("selectDepartment", { departmentId: values.departmentId });
+              setDepartment(values.departmentId);
+              setDepartmentLocked(true);
+            }
+            await save("saveProfile", { name: values.name, classroom: values.classroom, interests: values.interests, image: user.image });
             setProfileState({ name: values.name, classroom: values.classroom, interests: values.interests });
             setStep(2);
           }}
@@ -55,7 +64,8 @@ export function Onboarding({ user, departments }: OnboardingProps) {
         <>
           <label className="field onboarding-department">
             <span>Департамент для вступления</span>
-            <select value={department} onChange={e => setDepartment(e.target.value)}>
+            <select value={department} onChange={e => setDepartment(e.target.value)} disabled={departmentLocked} required>
+              <option value="" disabled>Выберите департамент</option>
               {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <small>{departments.find(d => d.id === department)?.description}</small>

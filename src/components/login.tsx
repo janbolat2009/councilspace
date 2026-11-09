@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { ArrowRight, ShieldCheck, Loader2, Eye, EyeOff, Mail, UserPlus, LogIn } from "lucide-react";
 import { Button } from "./ui";
+import { DEPARTMENTS } from "@/lib/departments";
 export const authErrors: Record<string, string> = {
   AccessDenied: "Не удалось разрешить вход. Используйте подтверждённый Google-аккаунт школы.",
   SchoolDomain: "Для Google-входа нужен аккаунт разрешённого школьного домена.",
@@ -28,6 +29,7 @@ export function Login({ google, local, error, mode = "login" }: { google: boolea
   const registering = mode === "register";
   const router = useRouter();
   const [pending, setPending] = useState(false), [message, setMessage] = useState(""), [show, setShow] = useState(false);
+  const [department, setDepartment] = useState("");
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hostname === "127.0.0.1") {
       window.location.replace(window.location.href.replace("://127.0.0.1", "://localhost"));
@@ -37,9 +39,10 @@ export function Login({ google, local, error, mode = "login" }: { google: boolea
     setPending(false);
   }, [error, mode]);
   async function googleLogin() {
+    if (registering && !department) { setMessage("Выберите департамент перед регистрацией."); return; }
     setPending(true); setMessage("");
     try {
-      await signIn("google", { callbackUrl: registering ? "/auth/complete?mode=register" : "/auth/complete" });
+      await signIn("google", { callbackUrl: registering ? `/auth/complete?mode=register&department=${encodeURIComponent(department)}` : "/auth/complete" });
     } catch {
       setMessage(authErrors.ServiceUnavailable);
       setPending(false);
@@ -51,13 +54,14 @@ export function Login({ google, local, error, mode = "login" }: { google: boolea
     setPending(true); setMessage("");
     try {
       if (registering) {
+        values.department = department;
         const response = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error);
       }
       const nextUrl = registering ? "/onboarding" : "/auth/complete";
       const result = await signIn("password", { email: values.email, password: values.password, callbackUrl: nextUrl, redirect: false });
-      if (!result?.ok || result.error) throw new Error((result?.error && authErrors[result.error]) || authErrors.CredentialsSignin);
+      if (!result?.ok || result.error) throw new Error(registering ? "Аккаунт создан. Войдите по Email и паролю на странице входа, чтобы продолжить." : (result?.error && authErrors[result.error]) || authErrors.CredentialsSignin);
       router.replace(nextUrl);
       router.refresh();
     } catch (e) { setMessage(e instanceof Error ? e.message : authErrors.ServiceUnavailable); setPending(false); }
@@ -68,6 +72,7 @@ export function Login({ google, local, error, mode = "login" }: { google: boolea
       <Link href="/register" aria-current={registering ? "page" : undefined}><UserPlus size={17}/>Регистрация</Link>
     </div>
     <h1>{registering ? "Создать аккаунт" : "Войти в аккаунт"}</h1>
+    {registering && <label className="field auth-department" htmlFor="registration-department"><span>Ваш департамент</span><select id="registration-department" value={department} onChange={e => setDepartment(e.target.value)} disabled={pending} required aria-describedby="department-help"><option value="" disabled>Выберите департамент</option>{DEPARTMENTS.map(d => <option key={d.slug} value={d.slug}>{d.name}</option>)}</select><small id="department-help">Выбор закрепится за аккаунтом. Доступ к команде откроется после одобрения заявки. Руководящие роли назначаются отдельно.</small></label>}
     <p>{registering ? "Зарегистрируйтесь вручную по Email и паролю или в один клик через Google — после этого откроется анкета участника." : "Войдите через Google или введите свой Email и пароль."}</p>
     <Button variant="outline" className="google-button" disabled={!google || pending} onClick={googleLogin}>
       <GoogleIcon/>

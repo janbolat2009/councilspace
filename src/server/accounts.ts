@@ -3,134 +3,31 @@ import type { Account, Profile } from "next-auth";
 import { Prisma, type User } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
-import { ADMIN_EMAILS, DomainError, isGlobalManager, isSpecialAdminEmail, transaction } from "@/lib/policy";
+import { DomainError, transaction } from "@/lib/policy";
 import { hashPassword, verifyPassword } from "@/lib/password";
-export { ADMIN_EMAILS, isSpecialAdminEmail };
+import { DEPARTMENTS } from "@/lib/departments";
 export const emailSchema = z.string().trim().toLowerCase().email("Проверьте адрес email.").max(254);
 export const passwordSchema = z.string().min(10, "Пароль должен содержать минимум 10 символов.").max(128, "Пароль не длиннее 128 символов.");
 export const registrationSchema = z.object({
   name: z.string().trim().min(2, "Укажите ваше имя.").max(80),
-  email: emailSchema, password: passwordSchema, confirmPassword: z.string()
+  email: emailSchema, password: passwordSchema, confirmPassword: z.string(),
+  department: z.string().refine(value => DEPARTMENTS.some(d => d.slug === value), "Выберите департамент из списка.")
 }).strict().refine(v => v.password === v.confirmPassword, { path: ["confirmPassword"], message: "Пароли не совпадают." });
 
-export async function ensureMinisterPrivileges(userId: string, schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
-  try {
-    const user = await db.user.findUnique({ where: { id: userId } });
-    if (!user || !isSpecialAdminEmail(user.email)) return user;
-
-    const updated = await db.user.update({
-      where: { id: userId },
-      data: {
-        globalRole: isGlobalManager(user.globalRole) ? user.globalRole : "SCHOOL_ADMIN",
-        onboarded: true,
-      }
-    });
-
-    const depts = await ensureSchoolDepartments(schoolId);
-    for (const dept of depts) {
-      await db.membership.upsert({
-        where: { userId_departmentId: { userId, departmentId: dept.id } },
-        create: {
-          userId,
-          departmentId: dept.id,
-          role: "MINISTER",
-          status: "ACTIVE"
-        },
-        update: {
-          role: "MINISTER",
-          status: "ACTIVE"
-        }
-      });
-      await db.department.update({
-        where: { id: dept.id },
-        data: { ministerName: updated.name || "Жанболат" }
-      }).catch(() => {});
-    }
-
-    return updated;
-  } catch (err) {
-    console.warn("ensureMinisterPrivileges warning:", err);
-  }
-}
-let schemaInitialized: Promise<void> | null = null;
+// Schema changes belong to migrations, never to authentication requests.
 export async function ensureAuthEnvironment(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
-  if (process.env.NODE_ENV !== "test") {
-    if (!schemaInitialized) {
-      schemaInitialized = (async () => {
-        try {
-          await db.$executeRawUnsafe(`ALTER TYPE "GlobalRole" ADD VALUE IF NOT EXISTS 'PRIME_MINISTER'`);
-          await db.$executeRawUnsafe(`ALTER TYPE "GlobalRole" ADD VALUE IF NOT EXISTS 'COUNSELOR'`);
-        } catch (err) {
-          console.warn("Schema auto-check GlobalRole warning:", err);
-        }
-        try {
-          await db.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT`);
-        } catch (err) {
-          console.warn("Schema auto-check passwordHash warning:", err);
-        }
-        try {
-          await db.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "AuthRateLimit" ("key" TEXT PRIMARY KEY, "attempts" INTEGER NOT NULL DEFAULT 1, "windowStart" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
-        } catch (err) {
-          console.warn("Schema auto-check AuthRateLimit warning:", err);
-        }
-        try {
-          await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AuthRateLimit_windowStart_idx" ON "AuthRateLimit" ("windowStart")`);
-        } catch (err) {
-          console.warn("Schema auto-check AuthRateLimit index warning:", err);
-        }
-        try {
-          await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "User_email_case_insensitive" ON "User" (LOWER(email)) WHERE email IS NOT NULL`);
-        } catch (err) {
-          console.warn("Schema auto-check email index warning:", err);
-        }
-        try {
-          await db.school.upsert({
-            where: { id: schoolId },
-            create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
-            update: {}
-          });
-        } catch (err) {
-          console.warn("Schema auto-check school upsert warning:", err);
-        }
-      })();
-    }
-    await schemaInitialized;
-  }
+  await db.school.upsert({ where: { id: schoolId }, create: { id: schoolId }, update: {} });
 }
 export async function ensureSchoolDepartments(schoolId = process.env.COUNCIL_SCHOOL_ID || "school") {
   await ensureAuthEnvironment(schoolId);
-  try {
-    await db.school.upsert({
-      where: { id: schoolId },
-      create: { id: schoolId, name: "Student Council", timezone: "Asia/Qyzylorda" },
+  for (const department of DEPARTMENTS) {
+    await db.department.upsert({
+      where: { schoolId_slug: { schoolId, slug: department.slug } },
+      create: { ...department, schoolId, channels: { create: [{ name: "General" }, { name: "Announcements", announcements: true }] } },
       update: {}
     });
-  } catch {}
-  const existing = await db.department.findMany({
-    where: { schoolId },
-    select: { id: true, name: true, description: true },
-    orderBy: { name: "asc" }
-  });
-  if (existing.length) return existing;
-  const created = await db.department.upsert({
-    where: { schoolId_slug: { schoolId, slug: "intellectual-development" } },
-    create: {
-      schoolId,
-      slug: "intellectual-development",
-      name: "Intellectual Development",
-      ministerName: "Zhanbolat",
-      description: "Развиваем любознательность, обмениваемся знаниями и создаём пространство для смелых идей.",
-      channels: {
-        create: [
-          { name: "General" },
-          { name: "Announcements", announcements: true }
-        ]
-      }
-    },
-    update: {},
-    select: { id: true, name: true, description: true }
-  });
-  return [created];
+  }
+  return db.department.findMany({ where: { schoolId }, select: { id: true, slug: true, name: true, description: true }, orderBy: { name: "asc" } });
 }
 const memoryRateLimits = new Map<string, { attempts: number; windowStart: number }>();
 
@@ -177,25 +74,35 @@ export async function registerAccount(input: unknown) {
   await authLimit("signup-email", data.email, 5, 900000);
   await authLimit("signup-global", "all", 100, 900000);
   const passwordHash = await hashPassword(data.password);
-  await ensureAuthEnvironment();
-  const isAdmin = isSpecialAdminEmail(data.email);
+  const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
+  const departments = await ensureSchoolDepartments(schoolId);
+  const department = departments.find(d => d.slug === data.department)!;
   try {
     const user = await db.user.create({ data: {
       name: data.name,
       email: data.email,
       passwordHash,
-      schoolId: process.env.COUNCIL_SCHOOL_ID || "school",
-      globalRole: isAdmin ? "SCHOOL_ADMIN" : "STUDENT",
-      onboarded: isAdmin ? true : false,
+      schoolId,
+      registrationDepartmentId: department.id,
+      globalRole: "STUDENT",
+      onboarded: false,
     }, select: { id: true } });
-    if (isAdmin) {
-      await ensureMinisterPrivileges(user.id);
-    }
     return user;
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new DomainError("Аккаунт с таким email уже существует. Войдите с паролем или через Google.", 409);
     throw e;
   }
+}
+// Google users choose once during onboarding. This never grants membership or a role.
+export async function selectDepartment(actor: User, input: unknown) {
+  const data = z.object({ departmentId: z.string().min(1).max(100) }).strict().parse(input);
+  return transaction(async tx => {
+    const user = await tx.user.findUniqueOrThrow({ where: { id: actor.id } });
+    const department = await tx.department.findUnique({ where: { id: data.departmentId } });
+    if (!department || department.schoolId !== user.schoolId) throw new DomainError("Департамент недоступен.", 403);
+    if (user.registrationDepartmentId && user.registrationDepartmentId !== department.id) throw new DomainError("Департамент уже выбран. Для перевода обратитесь к администратору.", 403);
+    return tx.user.update({ where: { id: user.id }, data: { registrationDepartmentId: department.id }, select: { registrationDepartmentId: true } });
+  });
 }
 export async function authenticatePassword(input: unknown) {
   const parsed = z.object({ email: emailSchema, password: z.string().min(1).max(128) }).safeParse(input);

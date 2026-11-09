@@ -10,7 +10,7 @@ import { saveReport, decideReport } from "@/server/reports";
 import { createTask, updateTask, commentTask, createEvent, updateEvent } from "@/server/work";
 import { readChat, sendMessage, editMessage, markChannelRead } from "@/server/chat";
 import { saveProfile, updateMembership, updateGlobalRole, createDepartment, updateRate, updateSchool } from "@/server/admin";
-import { setPassword } from "@/server/accounts";
+import { setPassword, selectDepartment } from "@/server/accounts";
 export const dynamic = "force-dynamic";
 function failure(e: unknown) {
   if (e instanceof SyntaxError) return NextResponse.json({ error: "Некорректный запрос." }, { status: 400 });
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const { action, data } = z.object({ action: z.string(), data: z.unknown() }).strict().parse(JSON.parse(raw));
     const actor = await requireUser();
     const actions: Record<string, (actor: User, data: unknown) => Promise<unknown>> = {
-      apply, decideApplication, saveReport, decideReport, createTask, updateTask, commentTask, createEvent, updateEvent,
+      apply, selectDepartment, decideApplication, saveReport, decideReport, createTask, updateTask, commentTask, createEvent, updateEvent,
       sendMessage, editMessage, markChannelRead, saveProfile, updateMembership, updateGlobalRole, createDepartment, updateRate, updateSchool, setPassword,
       async readNotifications(user, value) {
         const input = z.object({ id: z.string().optional() }).strict().parse(value);

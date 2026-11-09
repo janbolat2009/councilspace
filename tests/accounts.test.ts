@@ -1,9 +1,10 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 import { db } from "../src/lib/db";
-import { registerAccount, authenticatePassword, acceptGoogleIdentity, setPassword, authLimit } from "../src/server/accounts";
+import { registerAccount as registerDepartmentAccount, authenticatePassword, acceptGoogleIdentity, setPassword, authLimit } from "../src/server/accounts";
 import { hashPassword, verifyPassword } from "../src/lib/password";
 import { saveProfile } from "../src/server/admin";
 import type { Account } from "next-auth";
+const registerAccount = (input: Record<string, unknown>) => registerDepartmentAccount({ department: "intellectual-development", ...input });
 const password = "Only a test passphrase 123!";
 const account: Account = { provider: "google", type: "oauth", providerAccountId: "verified-test-subject" };
 beforeEach(async () => {

@@ -1660,3 +1660,17 @@ body {
     gap: 12px;
   }
 }
+
+/* Match the existing auth fields without widening small screens. */
+.auth-department { margin: 20px 0; min-width: 0; }
+.auth-department select { width: 100%; min-width: 0; max-width: 100%; }
+.auth-department small { line-height: 1.5; overflow-wrap: anywhere; }
+.login-panel { min-width: 0; }
+.auth-form { min-width: 0; max-width: 100%; }
+@media (max-width: 560px) {
+  .google-button, .auth-submit { white-space: normal; }
+  .google-button > span, .auth-submit > span { min-width: 0; }
+  .auth-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .auth-tabs a { min-width: 0; flex-wrap: wrap; padding-inline: 6px; gap: 6px; }
+  .topbar .breadcrumb { min-width: 0; overflow: hidden; }
+}

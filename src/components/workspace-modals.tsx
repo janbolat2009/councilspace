@@ -78,8 +78,8 @@ export function WorkspaceModals({modal,close}:{modal:ModalState;close:()=>void})
       ...((data.user.globalRole==="SCHOOL_ADMIN"||data.user.isAdmin||member.user.globalRole==="SCHOOL_ADMIN")?[{value:"SCHOOL_ADMIN",label:"Администратор школы"}]:[])
     ];
     content=<Form fields={[
-      {name:"globalRole",label:"Роль в совете (Президиум)",value:member.user.globalRole,options:councilOptions,help:"Назначение роли Президента, Вице-президента, Премьер-министра или Каунслера закрепляет эту должность за этим участником."},
-      {name:"role",label:"Роль в департаменте",value:member.role,options:choices(["MEMBER","VICE_MINISTER","MINISTER"])},
+      ...(data.user.isAdmin ? [{name:"globalRole",label:"Роль в совете (Президиум)",value:member.user.globalRole,options:councilOptions}] : []),
+      {name:"role",label:"Роль в департаменте",value:member.role,options:choices(data.user.isAdmin ? ["MEMBER","VICE_MINISTER","MINISTER"] : [member.role])},
       {name:"status",label:"Статус в команде",value:member.status,options:member.userId===data.user.id?choices(["ACTIVE"]):choices(["ACTIVE","SUSPENDED","REVOKED"])},
       {name:"reason",label:"Комментарий / причина",type:"textarea",placeholder:"Например: Назначен президентом совета"}
     ]} onSubmit={v=>submit("updateMembership",{...v,userId:member.userId,departmentId:dept?.id})} submitLabel="Сохранить роли"/>;

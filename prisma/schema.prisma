@@ -85,6 +85,8 @@ model User {
   classroom     String @default("")
   interests     String @default("")
   onboarded     Boolean @default(false)
+  registrationDepartmentId String?
+  registrationDepartment Department? @relation("RegistrationDepartment", fields: [registrationDepartmentId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: Cascade)
   isDemo        Boolean @default(false)
   createdAt     DateTime @default(now())
   accounts      Account[]
@@ -105,6 +107,7 @@ model User {
   notifications Notification[]
   audits        AuditLog[]
   @@index([schoolId])
+  @@index([registrationDepartmentId])
 }
 model Account {
   id                String @id @default(cuid())
@@ -149,6 +152,7 @@ model Department {
   name         String
   description  String @default("")
   ministerName String @default("")
+  registrants  User[] @relation("RegistrationDepartment")
   rate         Decimal @default(10) @db.Decimal(10,4)
   ruleVersion  Int @default(1)
   memberships  Membership[]
@@ -158,6 +162,7 @@ model Department {
   channels     Channel[]
   audits       AuditLog[]
   @@unique([schoolId, slug])
+  @@unique([id, schoolId])
 }
 model Membership {
   id           String @id @default(cuid())

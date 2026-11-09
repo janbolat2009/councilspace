@@ -8,6 +8,8 @@ export async function apply(actor: User, input: unknown) {
     const department = await tx.department.findUnique({ where: { id: data.departmentId } });
     if (!department || department.schoolId !== actor.schoolId) throw new DomainError("Департамент не найден.", 404);
     const user = await tx.user.findUniqueOrThrow({ where: { id: actor.id } });
+    if (user.registrationDepartmentId && user.registrationDepartmentId !== department.id) throw new DomainError("Заявка доступна только в выбранный при регистрации департамент.", 403);
+    if (!user.registrationDepartmentId) await tx.user.update({ where: { id: actor.id }, data: { registrationDepartmentId: department.id } });
     if (!user.onboarded) throw new DomainError("Сначала заполните профиль.");
     const membership = await tx.membership.findUnique({ where: { userId_departmentId: { userId: actor.id, departmentId: data.departmentId } } });
     if (membership && membership.status !== "REVOKED") throw new DomainError("У вас уже есть членство в департаменте.");

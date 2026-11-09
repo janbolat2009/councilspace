@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { GlobalRole, User } from "@prisma/client";
-import { access, admin, audit, COUNCIL_ROLES, DomainError, isGlobalManager, isSpecialAdminEmail, transaction } from "@/lib/policy";
+import { access, admin, audit, COUNCIL_ROLES, DomainError, transaction } from "@/lib/policy";
 import { id, text, reason, optionalText, profileSchema, webUrl } from "@/lib/validation";
 const GLOBAL_ROLES = ["STUDENT", "SCHOOL_ADMIN", "PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"] as const;
 const SINGLE_COUNCIL_ROLES = new Set<string>(COUNCIL_ROLES);
@@ -22,11 +22,13 @@ export async function updateMembership(actor: User, input: unknown) {
     if (data.userId === actor.id && data.status !== "ACTIVE") throw new DomainError("Нельзя приостановить или отозвать собственное участие.", 400);
     const target = await tx.user.findUnique({ where: { id: data.userId } });
     if (!target || target.schoolId !== actor.schoolId) throw new DomainError("Пользователь недоступен.", 403);
-    const canAssignLeadership = user.globalRole === "SCHOOL_ADMIN" || isGlobalManager(user.globalRole) || isSpecialAdminEmail(user.email);
+    const canAssignLeadership = user.globalRole === "SCHOOL_ADMIN";
     const old = await tx.membership.findUnique({ where: { userId_departmentId: { userId: data.userId, departmentId: data.departmentId } } });
     if (!old && !canAssignLeadership) throw new DomainError("Назначение нового членства доступно руководству совета.", 403);
+    if (!canAssignLeadership && (!old || old.role !== "MEMBER" || data.role !== "MEMBER")) throw new DomainError("Руководящие роли назначает администратор школы.", 403);
     if (data.globalRole && data.globalRole !== target.globalRole) {
-      if (data.globalRole === "SCHOOL_ADMIN" && user.globalRole !== "SCHOOL_ADMIN" && !isSpecialAdminEmail(user.email)) {
+      await admin(tx, actor);
+      if (data.globalRole === "SCHOOL_ADMIN" && user.globalRole !== "SCHOOL_ADMIN") {
         throw new DomainError("Назначение администратора школы доступно администратору.", 403);
       }
       if (SINGLE_COUNCIL_ROLES.has(data.globalRole)) {
@@ -50,11 +52,7 @@ export async function updateMembership(actor: User, input: unknown) {
 export async function updateGlobalRole(actor: User, input: unknown) {
   const data = z.object({ userId: id, role: z.enum(GLOBAL_ROLES), reason: optionalText(1500) }).strict().parse(input);
   return transaction(async tx => {
-    const fresh = await tx.user.findUnique({ where: { id: actor.id } });
-    if (!fresh || (!isGlobalManager(fresh.globalRole) && !isSpecialAdminEmail(fresh.email))) throw new DomainError("Действие доступно руководству школы.", 403);
-    if (data.role === "SCHOOL_ADMIN" && fresh.globalRole !== "SCHOOL_ADMIN" && !isSpecialAdminEmail(fresh.email)) {
-      throw new DomainError("Действие доступно администратору школы.", 403);
-    }
+    await admin(tx, actor);
     const target = await tx.user.findUnique({ where: { id: data.userId } });
     if (!target || target.schoolId !== actor.schoolId) throw new DomainError("Пользователь недоступен.", 403);
     if (SINGLE_COUNCIL_ROLES.has(data.role)) {

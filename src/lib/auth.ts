@@ -4,8 +4,8 @@ import type { AdapterUser } from "next-auth/adapters";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
-import { DomainError, isGlobalManager } from "./policy";
-import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment, isSpecialAdminEmail, ensureMinisterPrivileges } from "@/server/accounts";
+import { DomainError } from "./policy";
+import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment } from "@/server/accounts";
 
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
 const adapter = PrismaAdapter(db);
@@ -20,19 +20,15 @@ export const authOptions: NextAuthOptions = {
       const schoolId = process.env.COUNCIL_SCHOOL_ID || "school";
       await ensureAuthEnvironment(schoolId);
       const email = data.email.toLowerCase();
-      const isAdmin = isSpecialAdminEmail(email);
       const user = await db.user.create({
         data: {
           ...data,
           email,
           schoolId,
-          globalRole: isAdmin ? "SCHOOL_ADMIN" : "STUDENT",
-          onboarded: isAdmin ? true : false,
+          globalRole: "STUDENT",
+          onboarded: false,
         }
       }) as AdapterUser;
-      if (isAdmin) {
-        await ensureMinisterPrivileges(user.id, schoolId);
-      }
       return user;
     },
     async linkAccount(account: Parameters<NonNullable<typeof adapter.linkAccount>>[0]) {
@@ -131,12 +127,6 @@ export async function currentUser() {
   if (!user && session.user.email) {
     const email = session.user.email.trim().toLowerCase();
     user = await db.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, isDemo: false } });
-  }
-  if (user && isSpecialAdminEmail(user.email)) {
-    if (!isGlobalManager(user.globalRole) || !user.onboarded) {
-      await ensureMinisterPrivileges(user.id, user.schoolId);
-      user = await db.user.findUnique({ where: { id: user.id } });
-    }
   }
   return user;
 }
