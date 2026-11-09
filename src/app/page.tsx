@@ -4,6 +4,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { publicData } from "@/server/queries";
 import { displayDate } from "@/lib/time";
+import { PUBLIC_COUNSELOR_NAME } from "@/lib/public-leadership";
 export const dynamic="force-dynamic";
 export default async function Home() {
   const data=await publicData();
@@ -103,9 +104,9 @@ export default async function Home() {
             ["COUNSELOR", "Counselor · Каунслер"],
           ] as const).map(([role, label]) => {
             const leader = data?.leaders.find(l => l.globalRole === role);
-            return <article key={role}><span className="leadership-avatar"><Users size={27}/></span><div><h3>{leader?.name || "Позиция открыта"}</h3><p>{label}</p></div></article>;
+            return <article key={role}><span className="leadership-avatar"><Users size={27}/></span><div><h3>{role === "COUNSELOR" ? PUBLIC_COUNSELOR_NAME : leader?.name || "Позиция открыта"}</h3><p>{label}</p></div></article>;
           })}
-          <article><span className="leadership-avatar accent"><GraduationCap size={27}/></span><div><h3>{data?.departments.find(d=>d.slug==="intellectual-development")?.ministerName||"Zhanbolat"}</h3><p>Minister · Intellectual Development</p></div></article>
+          {data.departments.map(department => <article key={department.id}><span className="leadership-avatar accent"><GraduationCap size={27}/></span><div><h3>{department.ministerName || (department.slug === "intellectual-development" ? "Zhanbolat" : "Позиция открыта")}</h3><p>Minister · {department.name}</p></div></article>)}
         </div>
       </section>
       <section className="public-section" id="calendar">

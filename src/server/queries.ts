@@ -4,6 +4,7 @@ import { COUNCIL_ROLES, isGlobalManager, serialize, DomainError } from "@/lib/po
 import { periodBounds, schoolDate } from "@/lib/time";
 import { z } from "zod";
 import { DEPARTMENTS } from "@/lib/departments";
+import { publicMinisterName } from "@/lib/public-leadership";
 const person = { id: true, name: true, image: true, classroom: true, interests: true, isDemo: true, globalRole: true } as const;
 export async function getWorkspace(actor: User, departmentId?: string, params = new URLSearchParams()) {
   const [user, existingSchool, existingDepartments, memberships] = await Promise.all([
@@ -93,7 +94,7 @@ export async function publicData() {
     if (!school) {
       return serialize({
         school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
-        departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: "" })),
+        departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: publicMinisterName(d.slug) })),
         events: [],
         leaders: [],
         hasDemo
@@ -104,12 +105,12 @@ export async function publicData() {
       db.event.findMany({ where: { department: { schoolId }, isPublic: true, status: { in: ["CONFIRMED", "COMPLETED"] } }, select: { id: true, title: true, description: true, startAt: true, endAt: true, location: true, audience: true, status: true }, orderBy: { startAt: "asc" } }),
       db.user.findMany({ where: { schoolId, globalRole: { in: [...COUNCIL_ROLES] } }, select: { name: true, image: true, globalRole: true } })
     ]);
-    return serialize({ school, departments, events, leaders, hasDemo });
+    return serialize({ school, departments: departments.map(d => ({ ...d, ministerName: publicMinisterName(d.slug, d.ministerName) })), events, leaders, hasDemo });
   } catch (err) {
     console.error("publicData error:", err);
     return serialize({
       school: { id: schoolId, name: "Student Council", logoUrl: "/logo.png", timezone: "Asia/Qyzylorda", navy: "#06394b", accent: "#9b1828", cream: "#fff2d5" },
-      departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: "" })),
+      departments: DEPARTMENTS.map(d => ({ ...d, id: d.slug, ministerName: publicMinisterName(d.slug) })),
       events: [],
       leaders: [],
       hasDemo
