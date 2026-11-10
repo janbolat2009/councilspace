@@ -22,7 +22,11 @@ export async function getWorkspace(actor: User, departmentId?: string, params = 
   const hasGlobalAccess = isGlobalManager(user.globalRole);
   const departments = allDepartments.filter(d => hasGlobalAccess || memberships.some(m => m.departmentId === d.id));
   if (departmentId && !departments.some(d => d.id === departmentId)) throw new DomainError("Доступ к департаменту закрыт.", 403);
-  const currentDepartment = departments.find(d => d.id === departmentId) ?? departments[0] ?? null;
+  const currentDepartment = departments.find(d => d.id === departmentId)
+    ?? departments.find(d => d.id === user.registrationDepartmentId)
+    ?? departments.find(d => memberships.some(m => m.departmentId === d.id && m.role !== "MEMBER"))
+    ?? departments[0]
+    ?? null;
   const activeMembership = currentDepartment ? memberships.find(m => m.departmentId === currentDepartment.id) ?? null : null;
   const deptId = currentDepartment?.id ?? "__none__";
   const manager = currentDepartment ? (hasGlobalAccess || (activeMembership?.status === "ACTIVE" && activeMembership.role !== "MEMBER")) : false;

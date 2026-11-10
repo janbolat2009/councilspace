@@ -68,7 +68,14 @@ export function Workspace({ initialData, view, demo = false }: { initialData: Wo
   const activeView = !data.department && !["profile","notifications"].includes(currentView) ? "profile" : currentView;
   const views: Record<string, React.ReactNode> = { overview:<Overview/>, tasks:<TasksPanel/>, events:<EventsPanel/>, calendar:<CalendarPanel/>, chat:<ChatPanel/>, leaderboard:<LeaderboardPanel/>, members:<MembersPanel/>, reports:<ReportsPanel/>, review:<ReportsPanel review/>, applications:<ApplicationsPanel/>, notifications:<NotificationsPanel/>, audit:<AuditPanel/>, profile:<ProfilePanel/>, settings:<SettingsPanel/> };
   const style = { "--navy": data.school.navy, "--accent": data.school.accent, "--cream": data.school.cream } as CSSProperties;
-  const roleCaption = demo ? "Демонстрационный профиль" : ["PRESIDENT", "VICE_PRESIDENT", "PRIME_MINISTER", "COUNSELOR"].includes(data.user.globalRole) ? statuses[data.user.globalRole] : data.manager ? "Руководство департамента" : "Личный кабинет";
+  const departmentRole = data.membership && data.membership.role !== "MEMBER" && data.department
+    ? `${statuses[data.membership.role]} · ${data.department.name}`
+    : null;
+  const roleCaption = demo
+    ? "Демонстрационный профиль"
+    : departmentRole
+      ?? (data.user.globalRole !== "STUDENT" ? statuses[data.user.globalRole] : null)
+      ?? (data.manager ? "Руководство департамента" : "Личный кабинет");
 
   return <WorkspaceContext.Provider value={{ data, demo, mutate, open:setModal, navigate, search }}><div className="app-shell" style={style}>
     {mobile && <button className="sidebar-backdrop" aria-label="Закрыть навигацию" onClick={() => setMobile(false)}/>}
