@@ -16,7 +16,8 @@
     "db:local": "tsx scripts/local-postgres.ts",
     "test:prepare": "tsx scripts/test-database.ts",
     "admin:bootstrap": "tsx scripts/bootstrap-admin.ts",
-    "leadership:sync": "tsx scripts/sync-leadership.ts"
+    "leadership:sync": "tsx scripts/sync-leadership.ts",
+    "leadership:approved": "tsx scripts/provision-approved-ministers.ts"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "1.0.7",

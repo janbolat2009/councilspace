@@ -6,6 +6,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
 import { DomainError } from "./policy";
 import { authenticatePassword, acceptGoogleIdentity, ensureAuthEnvironment } from "@/server/accounts";
+import { provisionApprovedMinister } from "@/server/approved-ministers";
 
 export const devLogin = process.env.NODE_ENV === "development" && process.env.ENABLE_DEV_LOGIN === "true";
 const adapter = PrismaAdapter(db);
@@ -82,6 +83,11 @@ export const authOptions: NextAuthOptions = {
       }
     })] : [])
   ],
+  events: {
+    async signIn({ user, account }) {
+      if (account?.provider === "google") await provisionApprovedMinister(user.id, true);
+    }
+  },
   callbacks: {
     async signIn({ account, profile }) {
       if (account?.provider === "password") return true;
